@@ -118,6 +118,9 @@ export const buildSettingsCommandContext = (
         toggleAlwaysShowMainWindowTitlebar: () => chrome.handleToggleAlwaysShowMainWindowTitlebar(
             !usePlayerChromeSettingsStore.getState().alwaysShowMainWindowTitlebar,
         ),
+        toggleAutoHideCursorWithPlayerChrome: () => chrome.handleToggleAutoHideCursorWithPlayerChrome(
+            !usePlayerChromeSettingsStore.getState().autoHideCursorWithPlayerChrome,
+        ),
         toggleAutoPlayOnLaunch: () => audio.handleToggleAutoPlayOnLaunch(
             !useAudioSettingsStore.getState().autoPlayOnLaunch,
         ),

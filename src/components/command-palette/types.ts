@@ -225,6 +225,7 @@ export type CommandPaletteSettingsContext = {
     setLatticePosterTintIntensity: (intensity: number) => void;
     toggleAlwaysShowTrackSwitchButtons: () => void;
     toggleAlwaysShowMainWindowTitlebar: () => void;
+    toggleAutoHideCursorWithPlayerChrome: () => void;
     /** Lab switch: whether the restored session starts playing by itself on launch. */
     toggleAutoPlayOnLaunch: () => void;
     toggleTranscodeFallback: () => void;
