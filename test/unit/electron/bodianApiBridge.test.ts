@@ -91,21 +91,21 @@ describe('Bodian desktop bridge', () => {
         expect(JSON.stringify(result)).not.toContain('secret');
     });
 
-    it.each(['login_qr_key', 'login_qr_create', 'login_qr_check', 'user_playlists', 'user_albums', 'liked_songs'])
-        ('blocks unverified account operation %s without networking', async operation => {
+    it.each(['user_playlists', 'user_albums', 'liked_songs'])
+        ('requires a fresh verified session for %s before networking', async operation => {
             const request = vi.fn();
             const bridge = createBodianApiBridge({ store: createStore(), safeStorage: cipher(), request });
-            expect(await bridge.request(operation, { key: 'old-key' })).toMatchObject({ ok: false, error: { code: 'unavailable' } });
+            expect(await bridge.request(operation, { key: 'old-key' })).toMatchObject({ ok: false, error: { code: 'auth-required' } });
             expect(request).not.toHaveBeenCalled();
         });
 
     it('discards rejected credentials without decrypting them and keeps catalog requests anonymous', async () => {
         const store = createStore();
-        store.set(SESSION_KEY, 'rejected-sealed-session');
+        store.set('BODIAN_SESSION_V1', 'rejected-sealed-session');
         const safeStorage = { ...cipher(), decryptString: vi.fn() };
         const request = vi.fn(async () => ({ code: 200, data: { resultList: [] } }));
         const bridge = createBodianApiBridge({ store, safeStorage, request });
-        expect(store.get(SESSION_KEY)).toBeUndefined();
+        expect(store.get('BODIAN_SESSION_V1')).toBeUndefined();
         expect(safeStorage.decryptString).not.toHaveBeenCalled();
         expect(await bridge.request('login_status')).toEqual({ ok: true, data: null });
         expect(request).not.toHaveBeenCalled();
@@ -114,6 +114,36 @@ describe('Bodian desktop bridge', () => {
         expect(url.searchParams.get('uid')).toBe('-1');
         expect(url.searchParams.get('token')).toBe('');
         expect(init.headers.token).toBeUndefined();
+    });
+
+    it('restores only V2 QR sessions and clears them on an authenticated request rejection', async () => {
+        const store = createStore(), safeStorage = cipher();
+        createSessionRepository({ store, safeStorage }).set({ uid: '123', token: 'fresh-secret', user: { id: '123', nickname: 'Test' } });
+        const request = vi.fn().mockResolvedValue({ code: 11012 });
+        const bridge = createBodianApiBridge({ store, safeStorage, request });
+        expect(await bridge.request('login_status')).toMatchObject({ ok: true, data: { id: '123' } });
+        expect(request).not.toHaveBeenCalled();
+        expect(await bridge.request('user_albums')).toMatchObject({ ok: false, error: { code: 'auth-required' } });
+        expect(await bridge.request('login_status')).toEqual({ ok: true, data: null });
+        expect(store.get(SESSION_KEY)).toBeUndefined();
+    });
+
+    it('does not clear a new QR session when an old account request is rejected late', async () => {
+        const store = createStore(), safeStorage = cipher();
+        createSessionRepository({ store, safeStorage }).set({ uid: '123', token: 'old-token', user: { id: '123' } });
+        let rejectOld!: (value: unknown) => void;
+        const request = vi.fn().mockImplementationOnce(() => new Promise(resolve => { rejectOld = resolve; }))
+            .mockResolvedValueOnce({ code: 200, data: { qrCode: 'fresh-qr' } })
+            .mockResolvedValueOnce({ code: 200, data: { status: 3 } })
+            .mockResolvedValueOnce({ code: 200, data: { id: 456, token: 'new-token', userInfo: { id: 456 } } });
+        const bridge = createBodianApiBridge({ store, safeStorage, request });
+        const oldRequest = bridge.request('user_albums');
+        await bridge.request('logout');
+        await bridge.request('login_qr_key');
+        expect(await bridge.request('login_qr_check', { key: 'fresh-qr' })).toMatchObject({ ok: true, data: { state: 'confirmed' } });
+        rejectOld({ code: 11012 });
+        await oldRequest;
+        expect(await bridge.request('login_status')).toMatchObject({ ok: true, data: { id: '456' } });
     });
 
     it('signs the exact query and body and preserves upstream preview metadata', async () => {

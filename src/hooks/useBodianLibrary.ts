@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { omni } from '../services/onlineMusic/omni';
-import { clearProviderAccountSnapshot, loadProviderAccountSnapshot, saveProviderAccountSnapshot } from '../services/onlineMusic/providerAccountCache';
+import { clearProviderAccountSnapshot, saveProviderAccountSnapshot } from '../services/onlineMusic/providerAccountCache';
 import { useOnlineProviderAccountStore } from '../stores/useOnlineProviderAccountStore';
 import { OnlineProviderError } from '../types/onlineMusic';
 import type { MediaId, ProviderCollection } from '../types/onlineMusic';
@@ -13,11 +13,14 @@ export const useBodianLibrary = () => {
     const refresh = useCallback(async () => {
         const current = ++generation.current;
         const store = useOnlineProviderAccountStore.getState();
-        if (!omni.getProviderAvailability('bodian').configured) {
-            store.clearAccount('bodian'); return false;
-        }
-        store.updateAccount('bodian', { freshness: 'refreshing', error: undefined });
         try {
+            if (!omni.getProviderAvailability('bodian').configured || !omni.getProviderCapabilities('bodian').auth) {
+                store.clearAccount('bodian');
+                await pendingSave.current.catch(() => {});
+                await clearProviderAccountSnapshot('bodian');
+                return false;
+            }
+            store.updateAccount('bodian', { freshness: 'refreshing', error: undefined });
             const user = await omni.getLoginStatus('bodian');
             if (generation.current !== current) return false;
             if (!user) {
@@ -55,7 +58,7 @@ export const useBodianLibrary = () => {
                 await pendingSave.current.catch(() => {});
                 await clearProviderAccountSnapshot('bodian');
             } else store.updateAccount('bodian', { hydration: 'ready', freshness: 'error',
-                status: store.accounts.bodian?.user ? 'authenticated' : 'error', error: 'bodian-refresh-failed' });
+                status: useOnlineProviderAccountStore.getState().accounts.bodian?.user ? 'authenticated' : 'error', error: 'bodian-refresh-failed' });
             return false;
         }
     }, []);
@@ -66,17 +69,10 @@ export const useBodianLibrary = () => {
         await Promise.all([omni.logout('bodian'), clearProviderAccountSnapshot('bodian')]);
     }, []);
     useEffect(() => {
-        let cancelled = false;
-        const startingGeneration = generation.current;
-        void (async () => {
-            const snapshot = await loadProviderAccountSnapshot('bodian');
-            if (cancelled || generation.current !== startingGeneration) return;
-            if (snapshot) useOnlineProviderAccountStore.getState().updateAccount('bodian', {
-                status: 'authenticated', ...snapshot, hydration: 'ready', freshness: 'stale', lastUpdatedAt: snapshot.savedAt,
-            });
-            await refresh();
-        })();
-        return () => { cancelled = true; generation.current++; };
+        // Historical snapshots have no verified identity binding; only a fresh session check may populate the account.
+        useOnlineProviderAccountStore.getState().clearAccount('bodian');
+        void refresh();
+        return () => { generation.current++; };
     }, [refresh]);
     return { refresh, logout };
 };

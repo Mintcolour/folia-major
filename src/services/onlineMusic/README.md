@@ -18,7 +18,7 @@ UI / hooks / stores / app services
 ```
 
 当前 registry 注册 `netease`、`kugou`、`qq` 和桌面端的 `bodian`。波点接入状态、接口与剩余验收见
-[`docs/bodian.md`](../../../docs/bodian.md)；歌单写入能力暂未实现。Navidrome 是独立的 Subsonic 服务，入口是 `src/services/navidromeService.ts`，不属于 Omni provider。
+[`docs/bodian.md`](../../../docs/bodian.md)；支持喜欢与自建歌单歌曲增删，收藏写入尚未实现。Navidrome 是独立的 Subsonic 服务，入口是 `src/services/navidromeService.ts`，不属于 Omni provider。
 
 ## Public contract
 

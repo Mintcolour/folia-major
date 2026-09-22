@@ -49,7 +49,8 @@ export const normalizeBodianCollection = (raw: unknown, type = 'playlist'): Prov
     const item = bodianRecord(raw);
     if (item.providerId === 'bodian') return item as ProviderCollection;
     if (!item.id) throw new OnlineProviderError('invalid-response', 'Bodian collection has no id', 'bodian');
-    const source = Number(item.sourceType ?? (type === 'album' ? 6 : 4));
+    // Owned playlists omit sourceType in the account response but require source 5 for their tracks.
+    const source = Number(item.sourceType ?? (type === 'album' ? 6 : item.isOwned ? 5 : 4));
     const publishedAt = Date.parse(item.showtime || '');
     return {
         providerId: 'bodian', id: text(item.id), type, name: text(item.name), coverUrl: cover(item.pic),

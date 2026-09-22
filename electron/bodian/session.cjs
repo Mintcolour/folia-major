@@ -2,11 +2,13 @@ const crypto = require('node:crypto');
 
 // electron/bodian/session.cjs
 
-const SESSION_KEY = 'BODIAN_SESSION_V1';
+const SESSION_KEY = 'BODIAN_SESSION_V2';
 const DEVICE_KEY = 'BODIAN_DEVICE_ID';
 
 // Credentials are loaded lazily, after Electron's OS encryption service becomes available.
 function createSessionRepository({ store, safeStorage, warn = console.warn }) {
+  // V1 included sessions from the rejected QR protocol; never decrypt or migrate them in production.
+  store.delete('BODIAN_SESSION_V1');
   let loaded = false;
   let current = null;
   let revision = 0;
@@ -27,13 +29,14 @@ function createSessionRepository({ store, safeStorage, warn = console.warn }) {
         const sealed = store.get(SESSION_KEY);
         if (typeof sealed !== 'string' || !canEncrypt()) return null;
         const value = JSON.parse(safeStorage.decryptString(Buffer.from(sealed, 'base64')));
-        if (value.version === 1 && value.uid && typeof value.token === 'string' && value.token) current = value;
+        if (value.version === 2 && /^[1-9]\d{0,19}$/.test(value.uid) && value.user?.id === value.uid
+          && typeof value.token === 'string' && value.token) current = value;
       } catch { warn('[BodianSession] Encrypted session could not be restored'); }
       return current;
     },
     set(value) {
       loaded = true;
-      current = { version: 1, uid: String(value.uid), token: value.token, user: value.user };
+      current = { version: 2, uid: String(value.uid), token: value.token, user: value.user };
       revision++;
       try {
         if (!canEncrypt()) throw new Error('Encryption unavailable');

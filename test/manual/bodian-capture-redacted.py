@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import time
 from pathlib import Path
@@ -18,8 +19,10 @@ SENSITIVE = ("token", "secret", "password", "phone", "mobile", "cookie", "sign",
 
 
 class RedactedCapture:
-    def __init__(self, output=None):
-        self.output = Path(output or "test-results/bodian-capture/redacted.jsonl")
+    def __init__(self, output=None, collections=False):
+        self.collections = collections
+        default_name = "collections-redacted.jsonl" if collections else "redacted.jsonl"
+        self.output = Path(output or f"test-results/bodian-capture/{default_name}")
         self.key = secrets.token_bytes(32)
         self.started = time.monotonic()
         self.fresh_qr_seen = False
@@ -38,6 +41,8 @@ class RedactedCapture:
             return value
         if field in {"authType", "status"} and isinstance(value, int):
             return value
+        if self.collections and field in {"type", "source", "sourceType", "collectType"} and isinstance(value, int) and 0 <= value <= 10:
+            return value
         digest = hmac.new(self.key, str(value).encode(), hashlib.sha256).hexdigest()[:20]
         return {"type": type(value).__name__, "match": digest}
 
@@ -48,7 +53,8 @@ class RedactedCapture:
 
     def response(self, flow):
         path = urlsplit(flow.request.path).path
-        if flow.request.host != HOST or path not in PATHS:
+        collection_path = bool(re.fullmatch(r"/api/service/collect(?:/[A-Za-z0-9_-]+)*", path))
+        if flow.request.host != HOST or not (path in PATHS or self.collections and collection_path):
             return
         if time.monotonic() - self.started > 600:
             return
@@ -57,6 +63,13 @@ class RedactedCapture:
             self.fresh_qr_seen = True
         if not self.fresh_qr_seen:
             return
+        if self.collections and not collection_path:
+            return
+        if self.collections:
+            # Keep the resource type (4/6/7), but never record playlist/album/user IDs in URLs.
+            parts = path.split('/')
+            path = '/'.join(':id' if part.isdigit() and (index != 4 or part not in {'4', '6', '7'}) else part
+                            for index, part in enumerate(parts))
         record = {"path": path, "method": flow.request.method, "httpStatus": flow.response.status_code}
         record["query"] = self.shape(dict(flow.request.query))
         for label, message in (("requestBody", flow.request), ("responseBody", flow.response)):

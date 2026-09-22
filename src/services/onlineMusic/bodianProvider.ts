@@ -6,6 +6,7 @@ import { getBodianTransportAvailability, requestBodian } from './bodianTransport
 import { bodianPage, normalizeBodianCollection, normalizeBodianSong, normalizeBodianUser } from './bodianNormalize';
 import { bodianCatalog } from './bodianCatalog';
 import { bodianLibrary, clearBodianLibraryCache } from './bodianLibrary';
+import { bodianMutations } from './bodianMutations';
 
 // src/services/onlineMusic/bodianProvider.ts
 
@@ -13,9 +14,9 @@ export const bodianProvider: OnlineMusicProvider = {
     id: 'bodian', displayName: '波点音乐', shortName: '波点',
     getAvailability: getBodianTransportAvailability,
     capabilities: {
-        search: true, playback: true, lyrics: true, wordByWordLyrics: true, auth: false,
+        search: true, playback: true, lyrics: true, wordByWordLyrics: true, auth: true,
         playlists: true, albums: true, artists: true, recommendations: true,
-        userLibrary: false, userAlbums: false, likes: false, mutations: false,
+        userLibrary: true, userAlbums: true, likes: true, mutations: true,
     },
     normalizeSong: normalizeBodianSong, normalizeUser: normalizeBodianUser, normalizeCollection: normalizeBodianCollection,
     songMetadata: { getSongMetadata: createProviderSongMetadata },
@@ -63,6 +64,7 @@ export const bodianProvider: OnlineMusicProvider = {
     },
     catalog: bodianCatalog,
     library: bodianLibrary,
+    mutations: bodianMutations,
     recommendations: {
         async getRecommendedCollections(limit) {
             const data = await requestBodian<any>('recommendations');

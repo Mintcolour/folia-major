@@ -14,6 +14,7 @@ async def main():
     target_group = parser.add_mutually_exclusive_group()
     target_group.add_argument("--pid", type=int)
     target_group.add_argument("--official-process", action="store_true")
+    parser.add_argument("--collections", action="store_true")
     args = parser.parse_args()
     if args.pid is not None and args.pid <= 0:
         raise ValueError("Invalid process id")
@@ -28,7 +29,7 @@ async def main():
     spec = importlib.util.spec_from_file_location("redacted", Path(__file__).with_name("bodian-capture-redacted.py"))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    capture = module.RedactedCapture()
+    capture = module.RedactedCapture(collections=args.collections)
     master.addons.add(capture)
 
     class Lifecycle:
@@ -42,7 +43,7 @@ async def main():
             asyncio.get_running_loop().call_later(600 if active_capture else 3, master.shutdown)
 
         def response(self, flow):
-            if capture.fresh_qr_seen and flow.request.host == module.HOST and flow.request.path.split('?')[0] == '/api/ucenter/users/login':
+            if not args.collections and capture.fresh_qr_seen and flow.request.host == module.HOST and flow.request.path.split('?')[0] == '/api/ucenter/users/login':
                 print(json.dumps({"exchange_observed": True}), flush=True)
                 asyncio.get_running_loop().call_later(1, master.shutdown)
 

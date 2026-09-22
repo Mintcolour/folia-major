@@ -1,4 +1,4 @@
-param([int]$BodianProcessId, [switch]$BeforeOfficialLaunch)
+param([int]$BodianProcessId, [switch]$BeforeOfficialLaunch, [switch]$Collections)
 
 # test/manual/bodian-capture-session.ps1
 # Trust only this temporary CA in the current user's store, then remove it on exit.
@@ -17,6 +17,7 @@ if ($BeforeOfficialLaunch) {
     }
     $captureArguments = @('--pid', $BodianProcessId)
 }
+if ($Collections) { $captureArguments += '--collections' }
 $certificatePath = Join-Path $workspace 'test-results/bodian-capture/mitmproxy-ca-cert.cer'
 $certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new($certificatePath)
 $certificateStore = [Security.Cryptography.X509Certificates.X509Store]::new('Root', 'CurrentUser')
