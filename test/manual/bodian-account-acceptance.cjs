@@ -1,4 +1,4 @@
-const { app, safeStorage } = require('electron');
+const { app, safeStorage, net } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const readline = require('node:readline');
@@ -36,7 +36,11 @@ app.whenReady().then(async () => {
       repository.set(value);
     },
   };
-  const client = createBodianClient({ deviceId: repository.deviceId, getSession: () => sessions.get() });
+  const client = createBodianClient({ deviceId: repository.deviceId, getSession: () => sessions.get(),
+    ...(process.argv.includes('--electron-net') ? { requestFactory: (options, onResponse) => {
+      const request = net.request(options); request.on('response', onResponse); return request;
+    } } : {}),
+  });
   const auth = createAuthOperations({ client, sessions });
   const library = createLibraryOperations({ client, sessions });
   const mutations = createMutationOperations({ client, sessions });
@@ -108,6 +112,46 @@ app.whenReady().then(async () => {
       const result = await testPlaylistRoundtrip({ client, library, mutations,
         expectedName: process.env.BODIAN_TEST_PLAYLIST_NAME, songId: id });
       emit({ operation, ...result });
+    } else if (operation === 'app-session-check') {
+      const appStore = new Store({ name: 'config', cwd: profile });
+      const sealed = appStore.get('BODIAN_SESSION_V2');
+      let appSession = null;
+      if (typeof sealed === 'string') appSession = JSON.parse(safeStorage.decryptString(Buffer.from(sealed, 'base64')));
+      emit({ operation, present: !!appSession, identityMatched: appSession?.uid === expectedId,
+        sameCredentialAsAcceptance: appSession?.token === sessions.get()?.token });
+    } else if (operation === 'liked-playback') {
+      const liked = await library.liked_songs({ limit: 100, offset: 0 });
+      for (const song of (liked.list || []).slice(0, 3)) {
+        const freeSign = song.freeSign || song.fsig || '';
+        const right = (await client.call('/api/play/music/v2/checkRight', {
+          params: { musicId: String(song.id), freeSign }, body: { musicId: Number(song.id), freeSign }, signed: true,
+        })).data;
+        let outcome;
+        try { const result = await audio({ id: song.id, quality: 'high', freeSign });
+          outcome = { ok: true, preview: !!result.preview, quality: result.quality }; }
+        catch (error) { outcome = { ok: false, code: error.code }; }
+        emit({ operation, name: song.name || song.songName, id: song.id, hasFreeSign: !!freeSign,
+          rightStatus: right?.status, rightFields: Object.keys(right || {}), offline: song.offline, online: song.online,
+          cannotOnlinePlay: song.payInfo?.cannotOnlinePlay, ...outcome });
+        for (const quality of ['high', 'lossless']) {
+          try {
+            const result = await audio({ id: song.id, quality, freeSign });
+            const response = await fetch(result.url, { headers: { Range: 'bytes=0-4095' }, signal: AbortSignal.timeout(15000) });
+            emit({ operation: 'audio-reachability', id: song.id, quality, status: response.status,
+              host: new URL(result.url).hostname, type: response.headers.get('content-type'), bytes: response.headers.get('content-length'),
+              cors: response.headers.get('access-control-allow-origin') });
+            await response.body?.cancel();
+            if (quality === 'high' && process.argv.includes('--audio-metadata')) {
+              const media = await fetch(result.url, { signal: AbortSignal.timeout(30000) });
+              const buffer = Buffer.from(await media.arrayBuffer());
+              const { parseBuffer } = await import('music-metadata');
+              const metadata = await parseBuffer(buffer, undefined, { duration: true, skipCovers: true });
+              emit({ operation: 'liked-audio-metadata', id: song.id, duration: metadata.format.duration,
+                codec: metadata.format.codec, bytes: buffer.length });
+            }
+          } catch (error) { emit({ operation: 'audio-reachability', id: song.id, quality, code: error.code || error.name }); }
+        }
+      }
     } else if (operation === 'audio') {
       const data = await audio({ id, quality });
       emit({ operation, quality: data.quality, preview: !!data.preview, hasUrl: !!data.url });

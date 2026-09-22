@@ -8,7 +8,7 @@ const { createMutationOperations } = require('./bodian/mutations.cjs');
 
 // electron/bodianApiBridge.cjs
 
-function createBodianApiBridge({ store, safeStorage, request, requestFactory, now = Date.now, warn = console.warn }) {
+function createBodianApiBridge({ store, safeStorage, request, requestFactory, onAudioSource = () => {}, now = Date.now, warn = console.warn }) {
   const sessions = createSessionRepository({ store, safeStorage, warn });
   const client = createBodianClient({ deviceId: sessions.deviceId, getSession: () => sessions.get(), request, requestFactory, now });
   const operations = {
@@ -27,7 +27,9 @@ function createBodianApiBridge({ store, safeStorage, request, requestFactory, no
           || Object.keys(params).length > 20 || Object.values(params).some(value => value !== undefined && !['string', 'number', 'boolean'].includes(typeof value))) {
           throw new BodianError('invalid-response', 'Invalid Bodian request parameters');
         }
-        return { ok: true, data: await operations[operation](params) };
+        const data = await operations[operation](params);
+        if (operation === 'audio' && data?.url) onAudioSource(data.url);
+        return { ok: true, data };
       } catch (error) {
         if (error instanceof BodianError && error.code === 'auth-required' && sessions.revision === requestRevision) sessions.clear();
         return { ok: false, error: { code: error instanceof BodianError ? error.code : 'invalid-response',

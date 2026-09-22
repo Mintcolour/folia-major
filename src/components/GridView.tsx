@@ -705,7 +705,7 @@ export const GridView: React.FC<GridViewProps> = ({
         setIsCreatePlaylistOpen(false);
     }, [playableTracks, sourceActions]);
 
-    const CACHE_SCHEMA_VERSION = 5;
+    const CACHE_SCHEMA_VERSION = 6;
 
     const isCloudDrive = collection ? (collection.type === 'cloud' || Number(collection.id) === -100) : false;
     const CACHE_SUFFIX = collection ? (isCloudDrive
@@ -745,16 +745,17 @@ export const GridView: React.FC<GridViewProps> = ({
                 pendingBackgroundTracksRef.current = null;
                 pendingBackgroundOffsetRef.current = 0;
                 const cached = collection.source === 'online'
-                    ? await getProviderCacheWithLegacyMigration<{ tracks: SongResult[], snapshotTime: number; schemaVersion?: number; } | SongResult[]>(
+                    ? await getProviderCacheWithLegacyMigration<{ tracks: SongResult[], snapshotTime: number; schemaVersion?: number; nextOffset?: number; } | SongResult[]>(
                         collection.providerId,
                         CACHE_SUFFIX,
                         [CACHE_SUFFIX],
                     )
-                    : await getFromCache<{ tracks: SongResult[], snapshotTime: number; schemaVersion?: number; } | SongResult[]>(CACHE_KEY);
+                    : await getFromCache<{ tracks: SongResult[], snapshotTime: number; schemaVersion?: number; nextOffset?: number; } | SongResult[]>(CACHE_KEY);
 
                 let cachedTracks: SongResult[] = [];
                 let cachedTime = 0;
                 let cachedSchemaVersion = 0;
+                let cachedOffset = 0;
 
                 if (Array.isArray(cached)) {
                     cachedTracks = cached;
@@ -762,18 +763,19 @@ export const GridView: React.FC<GridViewProps> = ({
                     cachedTracks = cached.tracks;
                     cachedTime = cached.snapshotTime;
                     cachedSchemaVersion = cached.schemaVersion ?? 0;
+                    cachedOffset = cached.nextOffset ?? cached.tracks.length;
                 }
 
                 if (cachedTracks.length > 0 && targetTime > 0 && cachedTime === targetTime && cachedSchemaVersion === CACHE_SCHEMA_VERSION) {
                     setTracks(cachedTracks);
-                    setOffset(cachedTracks.length);
+                    setOffset(cachedOffset);
                     setLoading(false);
                     const cachedHasMore = collection.trackCount !== undefined
                         ? cachedTracks.length < collection.trackCount
                         : true;
                     setHasMore(cachedHasMore);
                     if (cachedHasMore) {
-                        void fetchRemainingTracks(cachedTracks, targetTime, collection.trackCount);
+                        void fetchRemainingTracks(cachedTracks, targetTime, collection.trackCount, cachedOffset);
                     }
                     return;
                 }
@@ -781,6 +783,7 @@ export const GridView: React.FC<GridViewProps> = ({
                 let responseTracks: SongResult[] = [];
                 let hasMoreSync = false;
                 let totalTracksSync: number | undefined;
+                let nextOffsetSync: number | undefined;
 
                 if (collection.type === 'radio' && collection.id === 'personal_fm') {
                     responseTracks = await omni.getPersonalFm();
@@ -791,6 +794,7 @@ export const GridView: React.FC<GridViewProps> = ({
                     responseTracks = page.items;
                     hasMoreSync = page.hasMore;
                     totalTracksSync = page.total;
+                    nextOffsetSync = page.nextOffset;
                     if (typeof page.total === 'number' && page.total > 0) {
                         setCollectionDetail(previous => ({
                             ...(previous || collection),
@@ -801,13 +805,14 @@ export const GridView: React.FC<GridViewProps> = ({
 
                 if (responseTracks.length > 0) {
                     setTracks(responseTracks);
-                    setOffset(responseTracks.length);
+                    const nextOffset = nextOffsetSync ?? responseTracks.length;
+                    setOffset(nextOffset);
                     setHasMore(hasMoreSync);
 
-                    saveToCache(CACHE_KEY, { tracks: responseTracks, snapshotTime: targetTime, schemaVersion: CACHE_SCHEMA_VERSION });
+                    saveToCache(CACHE_KEY, { tracks: responseTracks, nextOffset, snapshotTime: targetTime, schemaVersion: CACHE_SCHEMA_VERSION });
 
                     if (hasMoreSync) {
-                        fetchRemainingTracks(responseTracks, targetTime, totalTracksSync);
+                        fetchRemainingTracks(responseTracks, targetTime, totalTracksSync, nextOffset);
                     }
                 } else {
                     setHasMore(false);
@@ -820,7 +825,7 @@ export const GridView: React.FC<GridViewProps> = ({
                     if (page.items.length > 0) {
                         setTracks(prev => {
                             const combined = [...prev, ...page.items];
-                            saveToCache(CACHE_KEY, { tracks: combined, snapshotTime: targetTime, schemaVersion: CACHE_SCHEMA_VERSION });
+                            saveToCache(CACHE_KEY, { tracks: combined, nextOffset: page.nextOffset, snapshotTime: targetTime, schemaVersion: CACHE_SCHEMA_VERSION });
                             return combined;
                         });
                         setOffset(page.nextOffset);
@@ -844,11 +849,12 @@ export const GridView: React.FC<GridViewProps> = ({
         initialTracks: SongResult[],
         targetTime: number,
         totalTracksOverride?: number,
+        initialOffset = initialTracks.length,
     ) => {
         setBackgroundLoading(true);
         setBackgroundLoadFailed(false);
         let currentTracks = [...initialTracks];
-        let currentOffset = initialTracks.length;
+        let currentOffset = initialOffset;
         let fetching = true;
         let safetyCount = 0;
         const MAX_LOOPS = 50;
@@ -879,7 +885,7 @@ export const GridView: React.FC<GridViewProps> = ({
                         setTracks(nextTracks);
                         setOffset(currentOffset);
                     }
-                    saveToCache(CACHE_KEY, { tracks: currentTracks, snapshotTime: targetTime, schemaVersion: CACHE_SCHEMA_VERSION });
+                    saveToCache(CACHE_KEY, { tracks: currentTracks, nextOffset: currentOffset, snapshotTime: targetTime, schemaVersion: CACHE_SCHEMA_VERSION });
 
                     if (addedCount === 0
                         || !page.hasMore) {

@@ -24,6 +24,15 @@ function playlistId(playlist: MediaId | ProviderCollection): string {
     return String(playlist.id);
 }
 
+// The account playlist response is inconsistent about the isLiked flag. The built-in
+// list is nevertheless identifiable by its stable Chinese names, so mutations must
+// recognize both forms before choosing the dedicated like endpoint.
+function isBodianLikedPlaylist(playlist: ProviderCollection): boolean {
+    if (playlist.isLiked === true) return true;
+    const name = String(playlist.name || '').trim();
+    return name === '我喜欢' || name === '我喜欢的音乐';
+}
+
 export const bodianMutations: OnlineMutationProvider = {
     canAddToPlaylist: playlist => playlist.providerId === 'bodian' && playlist.type === 'playlist' && playlist.isOwned === true,
     async likeSong(song, liked) {
@@ -32,6 +41,12 @@ export const bodianMutations: OnlineMutationProvider = {
     },
     async updatePlaylistTracks(operation, playlist, tracks) {
         if (!tracks.length) return;
+        // Bodian's built-in 我喜欢 list is backed by the like endpoint; the generic playlist
+        // mutation endpoint rejects that list even though it is returned with user playlists.
+        if (isBodianLikedPlaylist(playlist)) {
+            for (const track of tracks) await this.likeSong(track, operation === 'add');
+            return;
+        }
         if (tracks.length > 100) throw new OnlineProviderError('unsupported', 'Select at most 100 tracks per operation', 'bodian');
         const id = playlistId(playlist);
         const trackIds = tracks.map(songId).join(',');

@@ -29,8 +29,16 @@ function createMutationOperations({ client, sessions }) {
     const tracks = [...new Set(params.trackIds.split(',').map(numericId))];
     if (!tracks.length || tracks.length > 100) throw new BodianError('invalid-response', 'Invalid Bodian track count');
     const { data } = await client.call('/api/service/playlist/userCreate', { params: { userId: uid } });
-    if (!Array.isArray(data?.playLists) || !data.playLists.some(item => String(item.id) === String(id))) {
-      throw new BodianError('unsupported', 'Bodian playlist is not owned by the current account');
+    const owned = Array.isArray(data?.playLists)
+      && data.playLists.some(item => String(item.id) === String(id));
+    if (!owned) {
+      // The built-in 我喜欢 list is returned separately from userCreate and is rejected by
+      // the ownership check above. It still uses the same playlist mutation endpoint once its
+      // id is verified against the current account's fond playlist.
+      const { data: liked } = await client.call('/api/service/playlist/fond', { params: { userId: uid } });
+      if (String(liked?.id) !== String(id)) {
+        throw new BodianError('unsupported', 'Bodian playlist is not owned by the current account');
+      }
     }
     return update(id, tracks, remove, revision);
   };

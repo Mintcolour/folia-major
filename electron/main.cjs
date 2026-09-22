@@ -14,6 +14,7 @@ const windowsWallpaperModule = require('./windowsWallpaperController.cjs');
 const macWallpaperModule = require('./macWallpaperController.cjs');
 const { createKugouApiBridge } = require('./kugouApiBridge.cjs');
 const { createBodianApiBridge } = require('./bodianApiBridge.cjs');
+const { createBodianMediaPolicy } = require('./bodian/mediaCors.cjs');
 const { createQqAuthSessionRepository } = require('./qqAuthSessionRepository.cjs');
 const { DEFAULT_DISCORD_APPLICATION_ID, createDiscordPresenceController } = require('./discordPresence.cjs');
 const { createVoiceInputPauseMonitor } = require('./voiceInputPause.cjs');
@@ -186,7 +187,9 @@ const transcodeService = createTranscodeService({
 // KuGou credentials stay inside the main process and are encrypted lazily after Electron is ready.
 // The bridge refuses Linux's plaintext `basic_text` fallback and degrades to an in-memory session.
 const kugouApiBridge = createKugouApiBridge({ store, safeStorage });
+const bodianMediaPolicy = createBodianMediaPolicy();
 const bodianApiBridge = createBodianApiBridge({ store, safeStorage,
+  onAudioSource: url => bodianMediaPolicy.register(url),
   requestFactory: (options, onResponse) => {
     const request = electronNet.request(options);
     request.on('response', onResponse);
@@ -2845,6 +2848,8 @@ function setupCorsBypassHandlers() {
         hostname === 'y.gtimg.cn' ||
         hostname === 'kugou.com' ||
         hostname.endsWith('.kugou.com') ||
+        // Bodian audio responses from this CDN can omit CORS headers required by the Web Audio player.
+        bodianMediaPolicy.allows(details) ||
         hostname === 'amll-ttml-db.stevexmh.net';
     } catch (error) {
       isTargetDomain = false;
@@ -2859,6 +2864,8 @@ function setupCorsBypassHandlers() {
 
     callback({ cancel: false, responseHeaders });
   });
+
+  ses.webRequest.onBeforeRedirect(details => bodianMediaPolicy.followRedirect(details));
 
   ses.webRequest.onErrorOccurred({ urls: ['*://*.kugou.com/*'] }, details => {
     const requestInfo = getKugouMediaRequestInfo(details);

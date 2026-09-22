@@ -26,7 +26,7 @@ async function allPlaylists(userId: MediaId): Promise<ProviderCollection[]> {
     while (true) {
         const data = await requestBodian<any>('user_playlists', { limit: 100, offset });
         if (offset === 0) {
-            if (data.liked?.id) items.push(normalizeBodianCollection({ ...data.liked, isOwned: true }));
+            if (data.liked?.id) items.push(normalizeBodianCollection({ ...data.liked, isOwned: true, isLiked: true }));
             items.push(...bodianCollectionItems(data.owned, 'playLists').map(raw => normalizeBodianCollection({ ...(raw as object), isOwned: true })));
         }
         const collected = bodianCollectionItems(data.collected, 'playLists').map(raw => normalizeBodianCollection({ ...(raw as object), isOwned: false }));

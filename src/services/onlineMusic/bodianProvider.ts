@@ -16,7 +16,7 @@ export const bodianProvider: OnlineMusicProvider = {
     capabilities: {
         search: true, playback: true, lyrics: true, wordByWordLyrics: true, auth: true,
         playlists: true, albums: true, artists: true, recommendations: true,
-        userLibrary: true, userAlbums: true, likes: true, mutations: true,
+        userLibrary: true, userAlbums: true, likes: true, mutations: true, playlistTrackMutations: true,
     },
     normalizeSong: normalizeBodianSong, normalizeUser: normalizeBodianUser, normalizeCollection: normalizeBodianCollection,
     songMetadata: { getSongMetadata: createProviderSongMetadata },

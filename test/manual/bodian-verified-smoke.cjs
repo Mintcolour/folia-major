@@ -23,6 +23,35 @@ async function main() {
     const errors = [];
     page.on('pageerror', error => errors.push(error.name));
     await page.waitForLoadState('domcontentloaded');
+    if (process.argv.includes('--liked-playback')) {
+      const checks = await page.evaluate(async () => {
+        const { omni } = await import('/src/services/onlineMusic/omni.ts');
+        const user = await omni.getLoginStatus('bodian');
+        if (!user) throw new Error('Missing session');
+        const ids = await omni.getProviderLikedSongIds('bodian', user.id);
+        const results = [];
+        for (const id of ids.slice(0, 3)) {
+          const song = await omni.getSongDetail('bodian', id);
+          const source = await omni.getAudioSource(song, 'high');
+          const audio = new Audio();
+          audio.crossOrigin = 'anonymous'; audio.muted = true; audio.src = source.url;
+          let error = null;
+          try {
+            await Promise.race([audio.play(), new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))]);
+            await new Promise(resolve => setTimeout(resolve, 500));
+          } catch (e) { error = e.name; }
+          results.push({ id, name: song.name, duration: Number.isFinite(audio.duration) ? audio.duration : null,
+            currentTime: audio.currentTime, mediaError: audio.error?.code ?? null, error });
+          audio.pause(); audio.removeAttribute('src'); audio.load();
+        }
+        return results;
+      });
+      console.log(JSON.stringify(checks));
+      if (!checks.length || checks.some(check => check.currentTime <= 0 || check.mediaError || check.error)) {
+        throw new Error('Liked-song decoding regression failed');
+      }
+      return;
+    }
     const result = await page.evaluate(async () => {
       const { omni } = await import('/src/services/onlineMusic/omni.ts');
       const { useOnlineProviderAccountStore } = await import('/src/stores/useOnlineProviderAccountStore.ts');
