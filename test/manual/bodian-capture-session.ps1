@@ -20,15 +20,24 @@ if ($BeforeOfficialLaunch) {
 if ($Collections) { $captureArguments += '--collections' }
 $certificatePath = Join-Path $workspace 'test-results/bodian-capture/mitmproxy-ca-cert.cer'
 $certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new($certificatePath)
+$importCertificatePath = Join-Path $workspace 'test-results/bodian-capture/mitmproxy-ca-cert.der.cer'
+# Use the public DER certificate as consistent input to Windows certificate tooling.
+[IO.File]::WriteAllBytes($importCertificatePath, $certificate.Export([Security.Cryptography.X509Certificates.X509ContentType]::Cert))
 $certificateStore = [Security.Cryptography.X509Certificates.X509Store]::new('Root', 'CurrentUser')
 $added = $false
 try {
     $certificateStore.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
     $existing = $certificateStore.Certificates.Find('FindByThumbprint', $certificate.Thumbprint, $false)
     if ($existing.Count -eq 0) {
-        $certificateStore.Add($certificate)
         $added = $true
+        & certutil.exe -user -addstore Root $importCertificatePath
+        if ($LASTEXITCODE -ne 0) { throw 'Windows rejected temporary certificate import' }
     }
+    # Windows may dismiss its root-trust prompt without Add throwing; verify persistence before capture.
+    $certificateStore.Close()
+    $certificateStore.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+    $trusted = $certificateStore.Certificates.Find('FindByThumbprint', $certificate.Thumbprint, $false)
+    if ($trusted.Count -eq 0) { throw 'Temporary certificate trust was not confirmed by Windows' }
     Write-Output 'Temporary capture certificate ready (CurrentUser only)'
     & './test-results/bodian-capture-tools/Scripts/python.exe' 'test/manual/bodian-capture-run.py' @captureArguments
     if ($LASTEXITCODE -ne 0) { throw 'Capture process failed' }
@@ -38,4 +47,5 @@ try {
         Write-Output 'Temporary capture certificate removed'
     }
     $certificateStore.Close()
+    Remove-Item -LiteralPath $importCertificatePath -ErrorAction SilentlyContinue
 }
