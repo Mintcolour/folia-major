@@ -203,6 +203,7 @@
     "koffi": "^3.2.0",
     "kugoumusicapi": "https://github.com/MakcRe/KuGouMusicApi/archive/refs/tags/v1.6.0.tar.gz",
     "music-metadata": "^11.14.0",
+    "qrcode": "^1.5.4",
     "onnxruntime-node": "^1.27.0",
     "ws": "^8.21.3"
   },

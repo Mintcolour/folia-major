@@ -188,6 +188,7 @@ export type ProviderErrorCode =
     | 'not-public'
     | 'unavailable'
     | 'not-playable'
+    | 'preview-only'
     | 'network'
     | 'invalid-response';
 

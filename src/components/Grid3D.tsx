@@ -43,6 +43,7 @@ import { countRender } from '../dev/renderCount';
 const LOGIN_COPY_BY_PROVIDER: Record<string, { title: string; note: string }> = {
     kugou: { title: 'home.loginTitleKugou', note: 'home.loginNoteKugou' },
     qq: { title: 'home.loginTitleQq', note: 'home.loginNoteQq' },
+    bodian: { title: 'home.loginTitleBodian', note: 'home.loginNoteBodian' },
 };
 const NETEASE_LOGIN_COPY = { title: 'home.loginTitle', note: 'home.loginNote' };
 

@@ -1,0 +1,60 @@
+const { BodianError } = require('./http.cjs');
+
+// electron/bodian/catalog.cjs
+
+function mediaId(value) {
+  const id = String(value ?? '');
+  if (!/^\d{1,20}$/.test(id) || /^0+$/.test(id)) throw new BodianError('invalid-response', 'Invalid Bodian media id');
+  return id;
+}
+
+function pagination(params, firstPage = 0) {
+  const limit = Number(params.limit ?? 50), offset = Number(params.offset ?? 0);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100 || !Number.isInteger(offset) || offset < 0) {
+    throw new BodianError('invalid-response', 'Invalid Bodian pagination');
+  }
+  return { pn: Math.floor(offset / limit) + firstPage, rn: limit };
+}
+
+// Each operation maps to a known endpoint; renderer callers cannot supply URLs, auth or arbitrary headers.
+function createCatalogOperations(client) {
+  const call = async (path, params) => (await client.call(`/api/${path}`, { params })).data;
+  const page = async (path, params, field, firstPage = 0, extra = {}) => {
+    const data = await call(path, { ...extra, ...pagination(params, firstPage) });
+    const skip = Number(params.offset || 0) % Number(params.limit || 50);
+    if (skip && Array.isArray(data?.[field])) data[field] = data[field].slice(skip);
+    return data;
+  };
+  return {
+    search: params => {
+      if (typeof params.query !== 'string' || !params.query.trim() || params.query.length > 500) {
+        throw new BodianError('invalid-response', 'Invalid Bodian search query');
+      }
+      return page('search/music/list', params, 'resultList', 0, { keyword: params.query.trim(), correct: 1 });
+    },
+    song_detail: params => call('service/music/info', { musicId: mediaId(params.id) }),
+    playlist_detail: params => call(`service/playlist/info/${mediaId(params.id)}`, { source: playlistSource(params.source) }),
+    playlist_tracks: params => page(`service/playlist/${mediaId(params.id)}/musicList`, params, 'list', 1, { source: playlistSource(params.source) }),
+    album_detail: params => call(`service/album/${mediaId(params.id)}`),
+    album_tracks: params => page(`service/album/music/${mediaId(params.id)}`, params, 'resultList'),
+    artist_detail: params => call(`service/artist/${mediaId(params.id)}`),
+    artist_songs: params => page(`service/artist/music/${mediaId(params.id)}`, params, 'resultList'),
+    artist_albums: params => page(`service/artist/album/${mediaId(params.id)}`, params, 'resultList'),
+    recommendations: () => call('service/finds/playlist'),
+    personal_fm: () => call('service/music/recommendList'),
+    lyrics: async params => {
+      const query = `type=lyric&req=2&lrcx=1&rid=${mediaId(params.id)}&songname=&artist=&corp=kuwo&fromchannel=bodian`;
+      const result = await client.call('/mobi.s', { lyric: true, params: { f: 'bodian', q: Buffer.from(query).toString('base64') } });
+      if (typeof result.data?.content !== 'string') throw new BodianError('invalid-response', 'Bodian lyric content is missing');
+      return { content: Buffer.from(result.data.content, 'base64').toString('utf8') };
+    },
+  };
+}
+
+function playlistSource(value) {
+  const source = Number(value ?? 4);
+  if (![1, 2, 3, 4, 5, 6].includes(source)) throw new BodianError('invalid-response', 'Invalid Bodian playlist source');
+  return source;
+}
+
+module.exports = { mediaId, pagination, playlistSource, createCatalogOperations };
