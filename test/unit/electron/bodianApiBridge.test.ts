@@ -21,6 +21,17 @@ const cipher = () => ({
 });
 
 describe('Bodian desktop bridge', () => {
+    it('advances a sparse server page to its boundary instead of repeating the first page', async () => {
+        const request = vi.fn().mockResolvedValueOnce({ code: 200, data: { total: 121, list: Array.from({ length: 99 }, (_, id) => ({ id: id + 1 })) } })
+            .mockResolvedValueOnce({ code: 200, data: { total: 121, list: Array.from({ length: 21 }, (_, id) => ({ id: id + 101 })) } });
+        const bridge = createBodianApiBridge({ store: createStore(), request });
+        const first = await bridge.request('playlist_tracks', { id: '123', limit: 100, offset: 0 });
+        expect(first.data.bodianPagination).toEqual({ nextOffset: 100, hasMore: true });
+        const second = await bridge.request('playlist_tracks', { id: '123', limit: 100, offset: first.data.bodianPagination.nextOffset });
+        expect(second.data.list).toHaveLength(21);
+        expect(second.data.bodianPagination).toEqual({ nextOffset: 121, hasMore: false });
+        expect(request.mock.calls.map(([url]) => url.searchParams.get('pn'))).toEqual(['1', '2']);
+    });
     it.each([false, true])('handles Chromium-decoded and raw gzip responses (compressed=%s)', async compressed => {
         const headers = new Map();
         const factory = (_options: unknown, onResponse: (response: any) => void) => {

@@ -96,6 +96,9 @@ https://bodian-oia.kuwo.cn/bodian/download.html?pageName=login_pc&pt=3&id=<qrCod
 - 歌曲身份保留 `online:bodian:<id>`。歌单的 `source` 保留在 `providerData` 中；不以 `hasNextPage=false`
   单独判断结束，因为真实歌单响应中的 PageHelper 标志可能不正确。
 - 自建歌单响应缺少 `sourceType`，必须按来源 5 读取曲目；公开集合默认来源仍为 4。
+- 部分服务端分页会省略歌曲：真实公开歌单标称 121 首，第一页只返回 99 首，第二页返回 21 首。
+  主进程提供按请求页边界推进的游标，前端不能用返回数量 99 作为下一页偏移；已实际验证两页取回
+  上游提供的 120 个不同歌曲 ID。未返回的 1 首不能补造，也不计作已获取。
 - 凭据只在主进程持有，并通过 Electron `safeStorage` 加密。系统加密不可用时，仅保留本次运行的会话。
 
 ## 验证方式与剩余工作
@@ -113,5 +116,5 @@ https://bodian-oia.kuwo.cn/bodian/download.html?pageName=login_pc&pt=3&id=<qrCod
 账号 ID、真实歌单 ID、凭据和音频地址不得写入仓库；`test-results` 不得提交。
 本地清理工具 `test/manual/bodian-clear-unverified-session.cjs` 只删除隔离配置中的会话键，不解密、不联网。
 
-剩余工作：收藏写入协议与实现、非空收藏专辑和大歌单分页的真实验收、完整 UI 操作回归。
+剩余工作：收藏写入协议与实现、非空收藏专辑的真实验收、完整 UI 操作回归。
 没有对应已验证协议的收藏方法保持缺省，不把 `mutations: true` 当作所有写入均可用的证明。

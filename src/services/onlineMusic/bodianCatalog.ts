@@ -9,7 +9,7 @@ export async function bodianSongPage(operation: BodianOperation, id: MediaId, li
     const data = await requestBodian<any>(operation, { id, limit, offset, source });
     const raw = data.resultList ?? data.list;
     if (!Array.isArray(raw)) throw new Error('Bodian song page is missing its list');
-    return bodianPage(raw.map(normalizeBodianSong), data.total, offset, limit);
+    return bodianPage(raw.map(normalizeBodianSong), data.total, offset, limit, data.bodianPagination);
 }
 
 export const bodianCatalog: OnlineCatalogProvider = {
@@ -32,6 +32,6 @@ export const bodianCatalog: OnlineCatalogProvider = {
     getArtistSongs: (id, limit, offset) => bodianSongPage('artist_songs', id, limit, offset),
     async getArtistAlbums(id, limit, offset) {
         const data = await requestBodian<any>('artist_albums', { id, limit, offset });
-        return bodianPage<ProviderCollection>(data.resultList.map((item: unknown) => normalizeBodianCollection(item, 'album')), data.total, offset, limit);
+        return bodianPage<ProviderCollection>(data.resultList.map((item: unknown) => normalizeBodianCollection(item, 'album')), data.total, offset, limit, data.bodianPagination);
     },
 };

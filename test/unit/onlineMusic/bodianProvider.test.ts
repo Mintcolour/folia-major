@@ -42,6 +42,14 @@ describe('Bodian provider', () => {
         expect(bodianPage([], 121, 50, 50)).toMatchObject({ hasMore: false, nextOffset: 50 });
     });
 
+    it('uses the main-process cursor when unavailable songs were omitted from a server page', async () => {
+        request.mockResolvedValueOnce({ list: Array.from({ length: 99 }, () => track), total: 121,
+            bodianPagination: { nextOffset: 100, hasMore: true } });
+        const page = await bodianProvider.catalog!.getPlaylistTracks!('123', 100, 0);
+        expect(page.items).toHaveLength(99);
+        expect(page).toMatchObject({ nextOffset: 100, hasMore: true });
+    });
+
     it('preserves search pagination and rejects malformed results', async () => {
         request.mockResolvedValueOnce({ resultList: [track], total: 51 });
         const result = await bodianProvider.search!.searchSongs('测试', 50, 50);

@@ -1,5 +1,5 @@
 const { BodianError } = require('./http.cjs');
-const { pagination } = require('./catalog.cjs');
+const { pagination, pageData } = require('./catalog.cjs');
 
 // electron/bodian/library.cjs
 
@@ -23,13 +23,15 @@ function createLibraryOperations({ client, sessions }) {
         read('service/playlist/fond', user),
         read('service/collect/4/list', { ...user, ...pagination(params, 1) }),
       ]);
-      return { owned, liked, collected };
+      return { owned, liked, collected: pageData(collected, params, 'playLists') };
     },
-    user_albums: params => read('service/collect/6/list', { ...paramsForUser(), ...pagination(params, 1) }),
+    async user_albums(params) {
+      return pageData(await read('service/collect/6/list', { ...paramsForUser(), ...pagination(params, 1) }), params, 'albumList');
+    },
     async liked_songs(params) {
       const liked = await read('service/playlist/fond', paramsForUser());
       if (!liked?.id) return { list: [], total: 0 };
-      return read(`service/playlist/${liked.id}/musicList`, { source: 5, ...pagination(params, 1) });
+      return pageData(await read(`service/playlist/${liked.id}/musicList`, { source: 5, ...pagination(params, 1) }), params, 'list');
     },
   };
 }

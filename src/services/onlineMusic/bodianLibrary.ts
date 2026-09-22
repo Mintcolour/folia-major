@@ -33,7 +33,7 @@ async function allPlaylists(userId: MediaId): Promise<ProviderCollection[]> {
         const previousCount = seen.size;
         collected.forEach(item => seen.add(`${item.providerData?.source}:${item.id}`));
         items.push(...collected);
-        const page = bodianPage(collected, data.collected?.total, offset, 100);
+        const page = bodianPage(collected, data.collected?.total, offset, 100, data.collected?.bodianPagination);
         if (!page.hasMore || page.nextOffset <= offset || seen.size === previousCount) break;
         offset = page.nextOffset;
     }
@@ -51,7 +51,7 @@ export const bodianLibrary: OnlineLibraryProvider = {
     async getUserAlbums(_userId, limit, offset) {
         const data = await requestBodian<any>('user_albums', { limit, offset });
         const items = bodianCollectionItems(data, 'albumList').map(item => normalizeBodianCollection(item, 'album'));
-        return bodianPage(items, data.total, offset, limit);
+        return bodianPage(items, data.total, offset, limit, data.bodianPagination);
     },
     async getLikedSongIds() {
         const ids = new Set<MediaId>();
@@ -61,7 +61,7 @@ export const bodianLibrary: OnlineLibraryProvider = {
             if (!Array.isArray(data.list)) throw new OnlineProviderError('invalid-response', 'Bodian liked songs are missing', 'bodian');
             const previousCount = ids.size;
             for (const item of data.list) if (item.id != null) ids.add(String(item.id));
-            const page = bodianPage(data.list, data.total, offset, 100);
+            const page = bodianPage(data.list, data.total, offset, 100, data.bodianPagination);
             if (!page.hasMore || page.nextOffset <= offset || ids.size === previousCount) break;
             offset = page.nextOffset;
         }

@@ -66,10 +66,13 @@ export const normalizeBodianCollection = (raw: unknown, type = 'playlist'): Prov
 };
 
 // Some Bodian pages contain bogus PageHelper flags: raw item count and total are authoritative.
-export const bodianPage = <T>(items: T[], total: unknown, offset: number, limit: number): ProviderPage<T> => {
+export const bodianPage = <T>(items: T[], total: unknown, offset: number, limit: number,
+    cursor?: { nextOffset: number; hasMore: boolean }): ProviderPage<T> => {
     const count = Number(total);
     const knownTotal = total != null && Number.isFinite(count) && count >= 0;
-    const nextOffset = offset + items.length;
+    const validCursor = cursor && Number.isSafeInteger(cursor.nextOffset) && cursor.nextOffset >= offset + items.length
+        && typeof cursor.hasMore === 'boolean' && (!cursor.hasMore || cursor.nextOffset > offset);
+    const nextOffset = validCursor ? cursor.nextOffset : offset + items.length;
     return { items, ...(knownTotal ? { total: count } : {}), nextOffset,
-        hasMore: items.length > 0 && (knownTotal ? nextOffset < count : items.length === limit) };
+        hasMore: validCursor ? cursor.hasMore : items.length > 0 && (knownTotal ? nextOffset < count : items.length === limit) };
 };

@@ -16,14 +16,28 @@ function pagination(params, firstPage = 0) {
   return { pn: Math.floor(offset / limit) + firstPage, rn: limit };
 }
 
+// Server pages can omit unavailable songs. Advance by the requested page boundary, not returned row count.
+function pageData(data, params, field) {
+  if (!Array.isArray(data?.[field])) return data;
+  const limit = Number(params.limit ?? 50), offset = Number(params.offset ?? 0);
+  const raw = data[field];
+  const items = raw.slice(offset % limit);
+  const pageEnd = (Math.floor(offset / limit) + 1) * limit;
+  const total = Number(data.total);
+  const knownTotal = data.total != null && Number.isSafeInteger(total) && total >= 0;
+  const hasMore = raw.length > 0 && (knownTotal ? pageEnd < total : raw.length === limit);
+  return { ...data, [field]: items, bodianPagination: {
+    nextOffset: hasMore ? pageEnd : Math.max(offset + items.length, knownTotal ? Math.min(pageEnd, total) : offset + items.length),
+    hasMore,
+  } };
+}
+
 // Each operation maps to a known endpoint; renderer callers cannot supply URLs, auth or arbitrary headers.
 function createCatalogOperations(client) {
   const call = async (path, params) => (await client.call(`/api/${path}`, { params })).data;
   const page = async (path, params, field, firstPage = 0, extra = {}) => {
     const data = await call(path, { ...extra, ...pagination(params, firstPage) });
-    const skip = Number(params.offset || 0) % Number(params.limit || 50);
-    if (skip && Array.isArray(data?.[field])) data[field] = data[field].slice(skip);
-    return data;
+    return pageData(data, params, field);
   };
   return {
     search: params => {
@@ -57,4 +71,4 @@ function playlistSource(value) {
   return source;
 }
 
-module.exports = { mediaId, pagination, playlistSource, createCatalogOperations };
+module.exports = { mediaId, pagination, pageData, playlistSource, createCatalogOperations };

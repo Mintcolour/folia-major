@@ -25,7 +25,7 @@ export const bodianProvider: OnlineMusicProvider = {
             if (!query.trim()) return bodianPage([], 0, offset, limit);
             const data = await requestBodian<any>('search', { query, limit, offset });
             if (!Array.isArray(data.resultList)) throw new OnlineProviderError('invalid-response', 'Bodian search list is missing', 'bodian');
-            return bodianPage(data.resultList.map(normalizeBodianSong), data.total, offset, limit);
+            return bodianPage(data.resultList.map(normalizeBodianSong), data.total, offset, limit, data.bodianPagination);
         },
     },
     playback: {
