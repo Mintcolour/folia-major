@@ -24,13 +24,10 @@ function playlistId(playlist: MediaId | ProviderCollection): string {
     return String(playlist.id);
 }
 
-// The account playlist response is inconsistent about the isLiked flag. The built-in
-// list is nevertheless identifiable by its stable Chinese names, so mutations must
-// recognize both forms before choosing the dedicated like endpoint.
+// The account library marks the built-in list explicitly. Do not use its display name as
+// an identity check: users are allowed to create a playlist with the same name.
 function isBodianLikedPlaylist(playlist: ProviderCollection): boolean {
-    if (playlist.isLiked === true) return true;
-    const name = String(playlist.name || '').trim();
-    return name === '喜欢' || name === '我喜欢' || name === '喜欢的音乐' || name === '我喜欢的音乐';
+    return playlist.isLiked === true;
 }
 
 const likeSong = async (song: MediaId | SongResult, liked: boolean): Promise<void> => {

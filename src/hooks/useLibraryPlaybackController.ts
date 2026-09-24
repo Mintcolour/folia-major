@@ -1430,17 +1430,16 @@ export function useLibraryPlaybackController({
         }
         try {
             const nextLiked = await omni.toggleSongLike(currentSong, likedSongIds);
-            // Keep the React-facing like snapshot in sync for every online provider. Omni updates
-            // its account cache above, but the player surfaces still need a state change to render
-            // the new heart state immediately (especially Bodian, whose list is refreshed lazily).
-            setLikedSongIds(prev => {
-                const next = new Set(prev);
-                for (const id of next) {
-                    if (String(id) === String(sourceRef.mediaId)) next.delete(id);
-                }
-                if (nextLiked) next.add(sourceRef.mediaId);
-                return next;
-            });
+            if (sourceRef.providerId === 'netease') {
+                setLikedSongIds(prev => {
+                    const next = new Set(prev);
+                    for (const id of next) {
+                        if (String(id) === String(sourceRef.mediaId)) next.delete(id);
+                    }
+                    if (nextLiked) next.add(sourceRef.mediaId);
+                    return next;
+                });
+            }
             setStatusMsg({ type: 'success', text: nextLiked ? t('status.liked') : t('status.unliked') || 'Removed from Liked' });
         } catch (error) {
             console.error('Like failed', error);

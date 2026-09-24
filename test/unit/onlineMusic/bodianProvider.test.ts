@@ -27,8 +27,9 @@ describe('Bodian provider', () => {
     });
 
     it('preserves private/liked playlist source and counts on cache hydration', () => {
-        const collection = normalizeBodianCollection({ id: 123, name: '测试歌单', musicCount: 121, sourceType: 5, isPrivate: 1 });
+        const collection = normalizeBodianCollection({ id: 123, name: '测试歌单', musicCount: 121, sourceType: 5, isPrivate: 1, isLiked: true });
         expect(collection).toMatchObject({ providerId: 'bodian', trackCount: 121, providerData: { source: 5, isPrivate: 1 } });
+        expect(collection.isLiked).toBe(true);
         expect(normalizeBodianCollection(collection)).toEqual(collection);
         expect(normalizeBodianCollection({ id: 123, name: 'Owned', isOwned: true }).providerData?.source).toBe(5);
         expect(normalizeBodianCollection({ id: 123, name: 'Public' }).providerData?.source).toBe(4);
