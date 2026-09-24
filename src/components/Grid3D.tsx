@@ -437,16 +437,6 @@ export const Grid3D: React.FC<Grid3DProps> = (props) => {
                 isFm: true,
             };
 
-            const dailyItem = {
-                id: 'daily_recommendations',
-                name: t('home.dailyRecommendations'),
-                coverUrl: getSongCoverUrl(dailySongs[0], activeProviderId) || '',
-                trackCount: dailySongs.length,
-                description: t('home.dailyRecommendationsDescription'),
-                summary: t('home.dailyRecommendationsSummary'),
-                isDailyRecommendations: true,
-            };
-
             const recommendedItems = recommendedCollections.map(collection => {
                 const description = collection.description || collection.creator?.nickname || '';
                 return {
@@ -456,7 +446,15 @@ export const Grid3D: React.FC<Grid3DProps> = (props) => {
                     summary: description,
                 };
             });
-            setRadioItems([fmItem, dailyItem, ...recommendedItems]);
+            setRadioItems([fmItem, ...(dailySongs.length > 0 ? [{
+                id: 'daily_recommendations',
+                name: t('home.dailyRecommendations'),
+                coverUrl: getSongCoverUrl(dailySongs[0], activeProviderId) || '',
+                trackCount: dailySongs.length,
+                description: t('home.dailyRecommendationsDescription'),
+                summary: t('home.dailyRecommendationsSummary'),
+                isDailyRecommendations: true,
+            }] : []), ...recommendedItems]);
         } catch (e) {
             console.error('[Grid3D] Failed to fetch radio items', e);
         } finally {

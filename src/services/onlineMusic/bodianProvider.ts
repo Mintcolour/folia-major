@@ -1,4 +1,4 @@
-import type { OnlineMusicProvider, ProviderAudioSource, QrLoginState } from '../../types/onlineMusic';
+import type { OnlineMusicProvider, ProviderAudioSource, ProviderCollection, QrLoginState } from '../../types/onlineMusic';
 import { OnlineProviderError } from '../../types/onlineMusic';
 import { createProviderSongMetadata } from '../../utils/songMetadata';
 import { parseBodianLyrics } from '../../utils/lyrics/bodianLyrics';
@@ -9,6 +9,41 @@ import { bodianLibrary, clearBodianLibraryCache } from './bodianLibrary';
 import { bodianMutations } from './bodianMutations';
 
 // src/services/onlineMusic/bodianProvider.ts
+
+const BODIAN_DISCOVER_MODULE_ID = 1;
+
+type BodianDiscoverDetail = { title?: unknown; subTitle?: unknown; musicList?: unknown[] };
+
+const normalizeBodianDiscoverCollection = (detail: BodianDiscoverDetail, index: number, fallbackTitle?: unknown): ProviderCollection => {
+    const songs = Array.isArray(detail.musicList) ? detail.musicList.map(normalizeBodianSong) : [];
+    const firstSong = songs[0];
+    return {
+        providerId: 'bodian',
+        id: `discover-${index}`,
+        type: 'playlist',
+        name: String(detail.title || fallbackTitle || `Discover ${index + 1}`),
+        coverUrl: firstSong?.album.coverUrl || '',
+        description: String(detail.subTitle || '「为你量身打造的专属歌单」'),
+        trackCount: songs.length,
+        providerData: { discoverIndex: index },
+    };
+};
+
+async function getBodianDiscoverCollections(): Promise<ProviderCollection[]> {
+    try {
+        const module = await requestBodian<any>('home_module', { moduleId: BODIAN_DISCOVER_MODULE_ID });
+        const cards = Array.isArray(module.songList) ? module.songList : [];
+        const results = await Promise.allSettled(cards.map(async (card: any) => {
+            const index = Number(card?.id);
+            if (!Number.isInteger(index) || index < 0) return null;
+            const detail = await requestBodian<BodianDiscoverDetail>('ai_playlist_detail', { index });
+            return normalizeBodianDiscoverCollection(detail, index, card?.title);
+        }));
+        return results.flatMap(result => result.status === 'fulfilled' && result.value ? [result.value] : []);
+    } catch {
+        return [];
+    }
+}
 
 export const bodianProvider: OnlineMusicProvider = {
     id: 'bodian', displayName: '波点音乐', shortName: '波点',
@@ -67,8 +102,19 @@ export const bodianProvider: OnlineMusicProvider = {
     mutations: bodianMutations,
     recommendations: {
         async getRecommendedCollections(limit) {
-            const data = await requestBodian<any>('recommendations');
-            return (data.lists || []).flatMap((group: any) => group.playLists || []).slice(0, limit).map(normalizeBodianCollection);
+            const [regular, discover] = await Promise.all([
+                requestBodian<any>('recommendations').then(data => (
+                    (data.lists || []).flatMap((group: any) => group.playLists || []).map(normalizeBodianCollection)
+                )).catch(() => [] as ProviderCollection[]),
+                getBodianDiscoverCollections(),
+            ]);
+            const seen = new Set<string>();
+            return [...discover, ...regular].filter(collection => {
+                const key = `${collection.providerId}:${collection.id}`;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            }).slice(0, limit);
         },
         async getPersonalFm() {
             const data = await requestBodian<any>('personal_fm');

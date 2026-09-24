@@ -55,6 +55,8 @@ function createCatalogOperations(client) {
     artist_songs: params => page(`service/artist/music/${mediaId(params.id)}`, params, 'resultList'),
     artist_albums: params => page(`service/artist/album/${mediaId(params.id)}`, params, 'resultList'),
     recommendations: () => call('service/finds/playlist'),
+    home_module: params => call('service/home/module', { moduleId: moduleId(params.moduleId) }),
+    ai_playlist_detail: params => call('service/home/aiPlaylistDetail', { index: discoverIndex(params.index) }),
     personal_fm: () => call('service/music/recommendList'),
     lyrics: async params => {
       const query = `type=lyric&req=2&lrcx=1&rid=${mediaId(params.id)}&songname=&artist=&corp=kuwo&fromchannel=bodian`;
@@ -65,10 +67,22 @@ function createCatalogOperations(client) {
   };
 }
 
+function moduleId(value) {
+  const id = Number(value);
+  if (!Number.isInteger(id) || id < 0 || id > 100) throw new BodianError('invalid-response', 'Invalid Bodian home module id');
+  return id;
+}
+
+function discoverIndex(value) {
+  const index = Number(value);
+  if (!Number.isInteger(index) || index < 0 || index > 100) throw new BodianError('invalid-response', 'Invalid Bodian Discover index');
+  return index;
+}
+
 function playlistSource(value) {
   const source = Number(value ?? 4);
   if (![1, 2, 3, 4, 5, 6].includes(source)) throw new BodianError('invalid-response', 'Invalid Bodian playlist source');
   return source;
 }
 
-module.exports = { mediaId, pagination, pageData, playlistSource, createCatalogOperations };
+module.exports = { mediaId, pagination, pageData, playlistSource, moduleId, discoverIndex, createCatalogOperations };

@@ -15,9 +15,18 @@ export async function bodianSongPage(operation: BodianOperation, id: MediaId, li
 export const bodianCatalog: OnlineCatalogProvider = {
     canResolveSongCatalogRefs: song => song.sourceRef?.kind === 'online' && song.sourceRef.providerId === 'bodian',
     resolveSongCatalogRefs: async song => song,
-    getPlaylistTracks: (id, limit, offset, collection) => bodianSongPage('playlist_tracks', id, limit, offset,
-        Number(collection?.providerData?.source ?? 4)),
+    async getPlaylistTracks(id, limit, offset, collection) {
+        const discoverIndex = collection?.providerData?.discoverIndex;
+        if (typeof discoverIndex === 'number') {
+            const data = await requestBodian<any>('ai_playlist_detail', { index: discoverIndex });
+            const raw = Array.isArray(data.musicList) ? data.musicList : [];
+            const items = raw.slice(offset, offset + limit).map(normalizeBodianSong);
+            return bodianPage(items, raw.length, offset, limit);
+        }
+        return bodianSongPage('playlist_tracks', id, limit, offset, Number(collection?.providerData?.source ?? 4));
+    },
     async getPlaylistDetail(id, collection) {
+        if (typeof collection?.providerData?.discoverIndex === 'number') return collection;
         return normalizeBodianCollection(await requestBodian('playlist_detail', { id, source: Number(collection?.providerData?.source ?? 4) }));
     },
     getAlbumTracks: (id, limit = 50, offset = 0) => bodianSongPage('album_tracks', id, limit, offset),

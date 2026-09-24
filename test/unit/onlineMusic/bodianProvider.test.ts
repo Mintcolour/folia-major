@@ -35,6 +35,37 @@ describe('Bodian provider', () => {
         expect(normalizeBodianCollection({ id: 123, name: 'Public' }).providerData?.source).toBe(4);
     });
 
+    it('loads complete Discover collections before ordinary recommendations', async () => {
+        request.mockImplementation(async (operation: string, params: Record<string, unknown> = {}) => {
+            if (operation === 'home_module') return { songList: [{ id: 0, title: '潮趣日推' }, { id: 1, title: '新歌大赏' }] };
+            if (operation === 'ai_playlist_detail') return {
+                title: Number(params.index) === 0 ? '潮趣日推' : '新歌大赏',
+                subTitle: '「为你量身打造的专属歌单」',
+                musicList: [track, { ...track, id: Number(params.index) + 1000, songName: 'Discover 歌曲' }],
+            };
+            if (operation === 'recommendations') return { lists: [{ playLists: [{ id: 123, name: '普通推荐', musicCount: 8 }] }] };
+            return {};
+        });
+        const collections = await bodianProvider.recommendations!.getRecommendedCollections!(10);
+        expect(collections).toHaveLength(3);
+        expect(collections.slice(0, 2)).toMatchObject([
+            { id: 'discover-0', name: '潮趣日推', trackCount: 2, providerData: { discoverIndex: 0 } },
+            { id: 'discover-1', name: '新歌大赏', trackCount: 2, providerData: { discoverIndex: 1 } },
+        ]);
+        expect(collections[2]).toMatchObject({ id: '123', name: '普通推荐' });
+    });
+
+    it('keeps ordinary recommendations when Discover loading fails', async () => {
+        request.mockImplementation(async (operation: string) => {
+            if (operation === 'home_module') throw new Error('Discover unavailable');
+            if (operation === 'recommendations') return { lists: [{ playLists: [{ id: 123, name: '普通推荐' }] }] };
+            return {};
+        });
+        await expect(bodianProvider.recommendations!.getRecommendedCollections!(10)).resolves.toMatchObject([
+            { id: '123', name: '普通推荐' },
+        ]);
+    });
+
     it('ignores bogus paging flags and terminates empty pages even if total is stale', async () => {
         request.mockResolvedValue({ list: [track], total: 121, hasNextPage: false, nextPage: 0 });
         const page = await bodianProvider.catalog!.getPlaylistTracks!('123', 1, 0, normalizeBodianCollection({ id: 123, name: '喜欢', sourceType: 5 }));
@@ -49,6 +80,17 @@ describe('Bodian provider', () => {
         const page = await bodianProvider.catalog!.getPlaylistTracks!('123', 100, 0);
         expect(page.items).toHaveLength(99);
         expect(page).toMatchObject({ nextOffset: 100, hasMore: true });
+    });
+
+    it('loads complete Discover tracks through the dedicated detail operation', async () => {
+        request.mockResolvedValue({ musicList: [track, { ...track, id: 229000, songName: '第二首' }] });
+        const collection = { providerId: 'bodian' as const, id: 'discover-0', type: 'playlist' as const,
+            name: '潮趣日推', trackCount: 2, providerData: { discoverIndex: 0 } };
+        const page = await bodianProvider.catalog!.getPlaylistTracks!('discover-0', 50, 0, collection);
+        expect(request).toHaveBeenCalledWith('ai_playlist_detail', { index: 0 });
+        expect(page.items).toHaveLength(2);
+        expect(page.items[0].sourceRef).toMatchObject({ providerId: 'bodian', mediaId: '228908' });
+        await expect(bodianProvider.catalog!.getPlaylistDetail!('discover-0', collection)).resolves.toEqual(collection);
     });
 
     it('preserves search pagination and rejects malformed results', async () => {
