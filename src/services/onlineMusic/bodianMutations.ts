@@ -30,21 +30,23 @@ function playlistId(playlist: MediaId | ProviderCollection): string {
 function isBodianLikedPlaylist(playlist: ProviderCollection): boolean {
     if (playlist.isLiked === true) return true;
     const name = String(playlist.name || '').trim();
-    return name === '我喜欢' || name === '我喜欢的音乐';
+    return name === '喜欢' || name === '我喜欢' || name === '喜欢的音乐' || name === '我喜欢的音乐';
 }
+
+const likeSong = async (song: MediaId | SongResult, liked: boolean): Promise<void> => {
+    try { await requestBodian('like_song', { id: songId(song), liked }); }
+    finally { clearBodianLibraryCache(); }
+};
 
 export const bodianMutations: OnlineMutationProvider = {
     canAddToPlaylist: playlist => playlist.providerId === 'bodian' && playlist.type === 'playlist' && playlist.isOwned === true,
-    async likeSong(song, liked) {
-        try { await requestBodian('like_song', { id: songId(song), liked }); }
-        finally { clearBodianLibraryCache(); }
-    },
+    likeSong,
     async updatePlaylistTracks(operation, playlist, tracks) {
         if (!tracks.length) return;
         // Bodian's built-in 我喜欢 list is backed by the like endpoint; the generic playlist
         // mutation endpoint rejects that list even though it is returned with user playlists.
-        if (isBodianLikedPlaylist(playlist)) {
-            for (const track of tracks) await this.likeSong(track, operation === 'add');
+        if (typeof playlist === 'object' && isBodianLikedPlaylist(playlist)) {
+            for (const track of tracks) await likeSong(track, operation === 'add');
             return;
         }
         if (tracks.length > 100) throw new OnlineProviderError('unsupported', 'Select at most 100 tracks per operation', 'bodian');

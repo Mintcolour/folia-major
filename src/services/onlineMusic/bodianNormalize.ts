@@ -61,6 +61,7 @@ export const normalizeBodianCollection = (raw: unknown, type = 'playlist'): Prov
         artists: artistsOf(item),
         ...(item.creatorId ? { creator: { id: text(item.creatorId), nickname: text(item.creatorName), avatarUrl: cover(item.creatorIcon) } } : {}),
         ...(item.isOwned === undefined ? {} : { isOwned: Boolean(item.isOwned) }),
+        ...(item.isLiked === undefined ? {} : { isLiked: Boolean(item.isLiked) }),
         providerData: { source, ...(item.isPrivate === undefined ? {} : { isPrivate: Number(item.isPrivate) }) },
     };
 };

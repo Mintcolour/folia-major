@@ -24,7 +24,14 @@ describe('Bodian playlist mutations', () => {
     it('does not write to a playlist owned by another account', async () => {
         const { client, operations } = setup();
         await expect(operations.playlist_tracks_add({ id: '999', trackIds: '789' })).rejects.toMatchObject({ code: 'unsupported' });
-        expect(client.call).toHaveBeenCalledTimes(1);
+        expect(client.call).toHaveBeenCalledTimes(2);
+    });
+    it('accepts the current account built-in liked playlist after fond lookup', async () => {
+        const { client, operations } = setup();
+        client.call.mockResolvedValueOnce({ data: { playLists: [] } })
+            .mockResolvedValueOnce({ data: { id: 999 } });
+        await operations.playlist_tracks_add({ id: '999', trackIds: '789' });
+        expect(client.call.mock.calls[2][1].body.playListId).toBe(999);
     });
     it('rejects a changed account between ownership lookup and mutation', async () => {
         const { client, sessions, operations } = setup();
