@@ -294,6 +294,7 @@ export const LocalGrid3DView: React.FC<LocalGrid3DViewProps> = ({
                 }}
             />
             <DesktopGrid3DSurface
+                focusMemoryScope={JSON.stringify(['local', activeSection.key])}
                 title={String(activeSection.label)}
                 mapButtonLabel={t('home.allAlbums')}
                 items={activeSection.items.map((item: any) => ({
@@ -322,6 +323,8 @@ export const LocalGrid3DView: React.FC<LocalGrid3DViewProps> = ({
                 hasFloatingPlayer={hasFloatingPlayer}
                 playlistVisibilityScope="local"
                 batchConfig={localBatchConfig}
+                ponderControls="local-grid-controls"
+                gridMapPonderScope="local-grid-map-page"
             />
         </>
     );

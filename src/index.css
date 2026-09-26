@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* Folium mod stylesheets (registries.styles) live in this layer. Declaring it
+   after Tailwind's layers makes mod rules win over host utilities without
+   !important, independent of when a mod's <style> is injected. */
+@layer folium-mods;
+
 @font-face {
   font-family: 'Folia Noto Serif SC';
   font-style: normal;
@@ -22,6 +27,17 @@ body {
   color: #e4e4e7;
   font-family: 'Inter', sans-serif;
   overflow: hidden;
+}
+
+/* 播放页空闲时隐藏鼠标指针。挂点在播放页的视觉层容器上，弹窗和浮动控件都在它外面，
+   不会被波及，所以不需要 !important。
+   后代选择器压得住 Tailwind 的 cursor-* 靠的不是特异性，而是这条规则**不在任何
+   @layer 里**：Tailwind v4 的工具类全在 @layer utilities 中，无层规则整体优先于有层
+   规则，与特异性无关（作用域内有 18 处 disabled:cursor-not-allowed，特异性比这条高）。
+   别把它挪进 @layer 或改写成 @utility，那会让这些元素在指针隐藏时露出光标。 */
+.cursor-auto-hidden,
+.cursor-auto-hidden * {
+  cursor: none;
 }
 
 :root {
@@ -211,4 +227,67 @@ html[data-click-through='active'] body .click-through-interactive * {
   animation: none;
   max-width: 5rem;
   opacity: 1;
+}
+
+/* 思索：一章播完后右边缘那个「下一章」提示里，箭头的横向呼吸。
+   方向就是它要去的方向，幅度压得很小 —— 它是提示，不是要抢走刚演完那幅画面的注意力。
+
+   动的是箭头图标而不是整个按钮：会动的点击目标本来就难点中，
+   而且按钮自身不停移动时 Playwright 会判定元素不稳定、永远点不下去。 */
+@keyframes ponder-next-cue-breathe {
+    0%, 100% { transform: translateX(0); }
+    50% { transform: translateX(4px); }
+}
+
+.ponder-next-cue-arrow {
+    animation: ponder-next-cue-breathe 1.8s ease-in-out infinite;
+}
+
+:root[data-reduce-motion~='uiMicroMotion'] .ponder-next-cue-arrow {
+    animation: none;
+}
+
+/* 自动进入下一章的读条。走 CSS 而不是 React state：它每帧都在变，
+   进 state 等于让整个教程层按帧重渲染，正是 frontend-runtime-guardrails 要挡的形状。
+   时长由内联的 animation-duration 给，因为它是 DSL 里的一个常量。 */
+@keyframes ponder-next-cue-countdown {
+    from { transform: scaleX(0); }
+    to { transform: scaleX(1); }
+}
+
+.ponder-next-cue-countdown {
+    animation-name: ponder-next-cue-countdown;
+    animation-timing-function: linear;
+    animation-fill-mode: forwards;
+    transform-origin: left center;
+}
+
+/* 思索：骨架框逐个落位。
+
+   一进场整幅骨架整齐地出现在那里，读起来像一张静态插图；让它们按声明顺序错开几十毫秒
+   落位，眼睛才会跟着「先是这一页，再是页里的这几块」走一遍，和字幕的讲述顺序对上。
+
+   幅度压得很小：它是入场，不是表演，落位之后紧接着就是真正要看的那段演示。 */
+@keyframes ponder-skeleton-in {
+    from { opacity: 0; transform: scale(0.97); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+.ponder-skeleton-in {
+    animation: ponder-skeleton-in 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* 标签跟着自己那个框来，不自带缩放 —— 它贴在框外沿，缩放会让它先歪一下。 */
+@keyframes ponder-skeleton-label-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.ponder-skeleton-label-in {
+    animation: ponder-skeleton-label-in 280ms ease-out both;
+}
+
+:root[data-reduce-motion~='uiMicroMotion'] .ponder-skeleton-in,
+:root[data-reduce-motion~='uiMicroMotion'] .ponder-skeleton-label-in {
+    animation: none;
 }

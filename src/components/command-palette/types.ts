@@ -20,6 +20,7 @@ import type { CommandPlatform } from './availability';
 import type { CommandPaletteSurface } from './surfaces/types';
 import type { CommandSyntaxSpec } from './syntax/types';
 import type { PlaybackEntryView } from '../../stores/usePlaybackEntryViewStore';
+import type { PonderHintVisibility } from '../../types/ponder';
 
 // src/components/command-palette/types.ts
 // Shared command palette contracts used by the registry, hook, and UI shell.
@@ -73,6 +74,12 @@ export type CommandPaletteCommand = {
     getPreview?: (input: string, context: CommandPaletteContext) => string | null;
     queueIndex?: number;
     queueSong?: SongResult;
+    /**
+     * Where in the options tab this command lands, set by the settings factories. The settings
+     * sidebar search reads it to reuse the command's titles, synonyms and pinyin as extra ways to
+     * find that section.
+     */
+    settingsTarget?: { subview: SettingsSubviewId; anchorId?: SettingsAnchorId };
     execute: (input: string, context: CommandPaletteContext) => Promise<boolean> | boolean;
 };
 
@@ -191,7 +198,6 @@ export type CommandPaletteSettingsContext = {
         initialVisualizerSection?: VisualizerSettingsSection | null,
         initialAnchorId?: SettingsAnchorId | null,
     ) => void;
-    setIsUserGuideModalOpen: (isOpen: boolean) => void;
     setAppLanguagePreference: (preference: AppLanguagePreference) => Promise<void> | void;
     toggleTransparentBackground: () => void;
     toggleDaylightMode: () => void;
@@ -202,6 +208,11 @@ export type CommandPaletteSettingsContext = {
     /** Which surface pressing play opens; see usePlaybackEntryViewStore. */
     playbackEntryView: PlaybackEntryView;
     setPlaybackEntryView: (view: PlaybackEntryView) => void;
+    ponderHintVisibility: PonderHintVisibility;
+    setPonderHintVisibility: (visibility: PonderHintVisibility) => void;
+    /** 触屏上那颗思索按钮显不显示。它是触屏唯一的入口，所以关掉是一个明确的选择。 */
+    togglePonderTouchButton: () => void;
+    toggleRememberHomeCardPosition: () => void;
     startPlayerBottomBarPositioning: () => void;
     canStartPlayerBottomBarPositioning: boolean;
     toggleAlwaysShowPlayerBackButton: () => void;
@@ -225,6 +236,8 @@ export type CommandPaletteSettingsContext = {
     setLatticePosterTintIntensity: (intensity: number) => void;
     toggleAlwaysShowTrackSwitchButtons: () => void;
     toggleAlwaysShowMainWindowTitlebar: () => void;
+    toggleNativeMacFullscreenButton: () => void;
+    toggleAutoHideCursorWithPlayerChrome: () => void;
     /** Lab switch: whether the restored session starts playing by itself on launch. */
     toggleAutoPlayOnLaunch: () => void;
     toggleTranscodeFallback: () => void;
@@ -308,9 +321,15 @@ export type CommandPaletteVisualizerContext = {
     visualizerBackgroundMode: VisualizerBackgroundMode | null;
     setVisualizerMode: (mode: VisualizerMode) => void;
     toggleRandomVisualizerModePerSong: () => void;
+    /** Lab > Fix lyric animation freeze on Linux: the Linux renderer fd leak workaround. */
+    toggleGlowBlurQuantize: () => void;
     setVisualizerBackgroundMode: (mode: VisualizerBackgroundMode) => void;
     setMonetBackgroundTuning: (patch: Partial<MonetBackgroundTuning>) => void;
     setLatentBackgroundTuning: (patch: Partial<LatentBackgroundTuning>) => void;
+    /** The built-in video layer behind the lyrics. */
+    toggleVideoLayer: () => void;
+    /** Opens the file picker for the video layer; resolves to the picked name, or null when cancelled. */
+    pickVideoLayerFile: () => Promise<string | null>;
     /**
      * Whether the active mode builds its typography from whole-line word segmentation. Resolved
      * from the registry by the context builder rather than read here: the command modules are

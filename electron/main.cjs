@@ -11,6 +11,8 @@ const { MOD_PROTOCOL_PRIVILEGED_SCHEME } = require('./modSystem/modProtocol.cjs'
 const { createWindowPlaybackHandoffStore } = require('./windowPlaybackHandoff.cjs');
 const wallpaperWatchdogModule = require('./wallpaperWatchdog.cjs');
 const windowsWallpaperModule = require('./windowsWallpaperController.cjs');
+const { createWindowsWallpaperTargetResolver } = require('./windowsWallpaperTarget.cjs');
+const { createWindowsWallpaperMouseInjector } = require('./windowsWallpaperMouse.cjs');
 const macWallpaperModule = require('./macWallpaperController.cjs');
 const { createKugouApiBridge } = require('./kugouApiBridge.cjs');
 const { createBodianApiBridge } = require('./bodianApiBridge.cjs');
@@ -39,13 +41,8 @@ const { createTranscodeService } = require('./transcode/service.cjs');
 const { TRANSCODE_PROTOCOL_SCHEME } = require('./transcode/protocol.cjs');
 const { sanitizeDualTheme: sanitizeGeneratedDualTheme } = require('../shared/themeSanitizer.cjs');
 const {
-  buildOpenAICompatibleRequestBody,
   detectOpenAICompatibleProvider,
-  extractResponseContentText,
-  formatOpenAICompatibleError,
   normalizeOpenAIChatCompletionsUrl,
-  resolveOpenAICompatibleModel,
-  resolveOpenAICompatibleTemperature,
   runAiJsonCompletion,
 } = require('./aiTextClient.cjs');
 const {
@@ -383,97 +380,38 @@ function getMainWindowNativeHwnd() {
   }
 }
 
+// Target display of the wallpaper session: the monitor the wallpaper window fills. Resolution
+// order (live ordinary window → session target → WINDOW_BOUNDS → primary) lives in
+// electron/windowsWallpaperTarget.cjs.
+const windowsWallpaperTarget = createWindowsWallpaperTargetResolver({
+  screen,
+  getStoredBounds: () => getStoredWindowState().bounds,
+  getMainWindow: () => mainWindow,
+});
+
+// Bounds of the display the wallpaper fills. The primary display is the last resort so a window is
+// never created with an unusable geometry.
+function getWallpaperTargetBounds() {
+  return (windowsWallpaperTarget.resolve() ?? screen.getPrimaryDisplay()).bounds;
+}
+
 // --- Windows wallpaper mode mouse injection (sendInputEvent) ---
-// The helper reports desktop mouse input (move + left button) as JSONL events in 96-DPI
-// virtualized screen pixels (its process is DPI-unaware, which is exactly Electron's DIP
-// space); here they are made window-relative and injected at the Chromium input-pipeline
-// level. Posting WM_MOUSEMOVE/WM_LBUTTONDOWN to the window directly is not an option: Chromium
-// arms TrackMouseEvent on the first processed WM_MOUSEMOVE, but the real cursor physically
-// sits on the desktop icon layer above the wallpaper window, so the system instantly answers
-// WM_MOUSELEAVE and hover is torn down between every forwarded move (measured 300–500
-// enter/leave pairs per second).
-let lastWallpaperMouseDown = { at: 0, x: 0, y: 0 };
-// Tracks the primary button between helper mousedown/mouseup reports: injected mouseMove
-// events carry no button state of their own, and Chromium derives MouseEvent.buttons from the
-// 'leftbuttondown' modifier — without it a drag is torn down by the first forwarded move.
-let wallpaperPrimaryButtonHeld = false;
+// The helper reports desktop mouse input (move + left button) as JSONL events in *physical* screen
+// pixels (it is per-monitor DPI aware, see the helper's main.rs); the injector converts them into
+// Chromium's DIP space with screen.screenToDipPoint, makes them window-relative and injects them at
+// the Chromium input-pipeline level. Posting WM_MOUSEMOVE/WM_LBUTTONDOWN to the window directly is
+// not an option: Chromium arms TrackMouseEvent on the first processed WM_MOUSEMOVE, but the real
+// cursor physically sits on the desktop icon layer above the wallpaper window, so the system
+// instantly answers WM_MOUSELEAVE and hover is torn down between every forwarded move (measured
+// 300–500 enter/leave pairs per second). See electron/windowsWallpaperMouse.cjs.
+const windowsWallpaperMouse = createWindowsWallpaperMouseInjector({
+  screen,
+  getMainWindow: () => mainWindow,
+});
 
 // Injects one helper mouse event into the main window's renderer.
 function forwardWallpaperMouseInput(event) {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    return;
-  }
-  // Helper coordinates are already in DIP screen space — only shift by the window origin.
-  const bounds = mainWindow.getContentBounds();
-  const x = event.x - bounds.x;
-  const y = event.y - bounds.y;
-  switch (event.event) {
-    case 'mousemove': {
-      // Outside the window (taskbar, other monitor) there is nothing to hover; button events
-      // still go through so a drag that strays out of bounds cannot stick the pressed state.
-      if (x < 0 || y < 0 || x > bounds.width || y > bounds.height) {
-        return;
-      }
-      const moveEvent = { type: 'mouseMove', x, y };
-      if (wallpaperPrimaryButtonHeld) {
-        moveEvent.modifiers = ['leftbuttondown'];
-      }
-      mainWindow.webContents.sendInputEvent(moveEvent);
-      return;
-    }
-    case 'mousedown': {
-      wallpaperPrimaryButtonHeld = true;
-      // clickCount must be synthesized: injected events bypass the OS multi-click detection.
-      const now = Date.now();
-      const isDoubleClick =
-        now - lastWallpaperMouseDown.at < 500 &&
-        Math.abs(event.x - lastWallpaperMouseDown.x) <= 8 &&
-        Math.abs(event.y - lastWallpaperMouseDown.y) <= 8;
-      lastWallpaperMouseDown = { at: now, x: event.x, y: event.y };
-      mainWindow.webContents.sendInputEvent({
-        type: 'mouseDown',
-        x,
-        y,
-        button: 'left',
-        clickCount: isDoubleClick ? 2 : 1,
-        modifiers: ['leftbuttondown'],
-      });
-      return;
-    }
-    case 'mouseup': {
-      wallpaperPrimaryButtonHeld = false;
-      mainWindow.webContents.sendInputEvent({
-        type: 'mouseUp',
-        x,
-        y,
-        button: 'left',
-        clickCount: 1,
-      });
-      return;
-    }
-    case 'mousewheel': {
-      // Scrollable content only exists inside the window; outside (taskbar, other monitor)
-      // the packet is dropped like a stray mousemove.
-      if (x < 0 || y < 0 || x > bounds.width || y > bounds.height) {
-        return;
-      }
-      // Helper deltas are raw-input notches (multiples of WHEEL_DELTA=120; hi-res wheels send
-      // smaller increments). Chromium's mouseWheel wants CSS pixels: ~100px per notch. The
-      // vertical sign passes through unchanged — sendInputEvent's injected deltaY semantics
-      // are inverted relative to native wheel events (calibrated on the real machine, where
-      // negating the raw delta produced reversed scrolling); horizontal keeps its sign
-      // (positive = scroll right).
-      const notch = (raw) => Math.round(((raw || 0) / 120) * 100);
-      mainWindow.webContents.sendInputEvent({
-        type: 'mouseWheel',
-        x,
-        y,
-        deltaX: notch(event.deltaX),
-        deltaY: notch(event.deltaY),
-      });
-      return;
-    }
-  }
+  windowsWallpaperMouse.forward(event);
 }
 
 // Helper process lifecycle + heartbeat watchdog + crash-loop breaker. The recovery callbacks
@@ -585,6 +523,11 @@ async function relaunchForWallpaperModeChange(nextEnabled, expectedGeneration = 
           done();
         }
       });
+    }
+    if (!nextEnabled) {
+      // The session is over: the next entry re-derives its monitor from wherever the app window
+      // then is, rather than from where this wallpaper session ran.
+      windowsWallpaperTarget.clear();
     }
     recreateMainWindowWithTransparencyMode(isTransparentPlayerBackgroundEnabled(), handoff);
     return;
@@ -3616,6 +3559,7 @@ async function generateGeminiTheme({ apiKey, systemPrompt, sourcePrompt, customF
 }
 
 const THEME_JSON_SCHEMA_NAME = 'dual_theme';
+const THEME_MAX_OUTPUT_TOKENS = 4096;
 const THEME_JSON_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -4028,6 +3972,20 @@ async function clearCoverCacheDirectory() {
   }
 }
 
+const { withoutImplicitClientIp } = require('./neteaseApiStartup.cjs');
+const { createNeteaseLoginDiagnostics } = require('./neteaseLoginDiagnostics.cjs');
+const neteaseLoginDiagnostics = createNeteaseLoginDiagnostics();
+// util/request 在首次 require 时读一次匿名 token 并缓存到进程结束，之后启动流程写回的新 token
+// 要到下次启动才生效。记下这一刻文件是否为空，诊断时才知道登录请求有没有匿名凭据兜底。
+neteaseLoginDiagnostics.noteStartup({
+  anonymousTokenAtLoad: fs.readFileSync(tokenPath, 'utf-8').trim() ? 'present' : 'empty',
+});
+// 必须赶在 main / server 首次 require util/request 之前替换缓存里的导出，它们拿到的才是包过的版本。
+// 先 require 再取缓存项：赋值左侧会先求值，写成一行时缓存项还不存在。
+// 诊断记录包在最里层，看到的是来源 IP 策略处理过、真正要发出去的 options。
+const ncmRequestPath = require.resolve('@neteasecloudmusicapienhanced/api/util/request');
+const ncmRequest = require(ncmRequestPath);
+require.cache[ncmRequestPath].exports = withoutImplicitClientIp(neteaseLoginDiagnostics.wrapRequest(ncmRequest));
 const { register_anonimous } = require('@neteasecloudmusicapienhanced/api/main');
 const { getXeapiPublicKey } = require('@neteasecloudmusicapienhanced/api/util/xeapiKey');
 const {
@@ -4126,10 +4084,16 @@ async function initializeNcmApiRuntime() {
     `[Netease API] xeapi public key ready (source=${refreshed ? 'network' : 'cache'}, version=${nextPublicKey?.version ?? 'unknown'})`,
   );
 
-  await refreshAnonymousToken({
+  const anonymousTokenRefreshed = await refreshAnonymousToken({
     registerAnonymous: register_anonimous,
     cookieToJson,
     persistToken: (token) => fs.writeFileSync(tokenPath, token, 'utf-8'),
+  });
+  neteaseLoginDiagnostics.noteStartup({
+    runtimeInitializedAt: Date.now(),
+    xeapiKeySource: refreshed ? 'network' : 'cache',
+    xeapiKeyVersion: nextPublicKey?.version ?? 'unknown',
+    anonymousTokenRefreshed,
   });
 }
 
@@ -4138,8 +4102,11 @@ async function startApi() {
   try {
     const freePort = await getFreePort();
     await initializeNcmApiRuntime();
-    await serveNcmApi({ port: freePort });
+    // 只监听 IPv4 回环：本地 API 只给本进程和渲染进程用，不该暴露到局域网；固定地址也让渲染进程
+    // 不再随 localhost 解析到 ::1 还是 127.0.0.1 而走不同的来源 IP 分支（见 withoutImplicitClientIp）。
+    await serveNcmApi({ port: freePort, host: '127.0.0.1' });
     assignedPort = freePort;
+    neteaseLoginDiagnostics.noteStartup({ listenHost: '127.0.0.1', listenPort: freePort });
     updateNeteaseApiStatus({ status: 'running', port: assignedPort, error: null });
     console.log('Netease API started on port', assignedPort);
   } catch (e) {
@@ -4935,8 +4902,8 @@ function createWindow(options = {}) {
   // type option, so this branch is mutually exclusive with the windowtolayer path.
   const useDesktopWindowType = isX11WallpaperMode();
   // Windows wallpaper mode: an ordinary frameless window that the helper parents into the
-  // WorkerW layer right after creation. It shares the fullscreen-primary-display geometry with
-  // the X11 branch, but the window type stays default.
+  // WorkerW layer right after creation. It shares the fullscreen-display geometry with the X11
+  // branch, but the window type stays default.
   const useWindowsWallpaper = isWindowsWallpaperMode();
   const useWallpaperGeometry = useDesktopWindowType || useWindowsWallpaper;
   // On a scaled X11 desktop (KWin display scale > 1) the bounds from the screen module are
@@ -4945,9 +4912,13 @@ function createWindow(options = {}) {
   // the full display, and then shown — a fresh map at the explicit bounds covers the whole screen.
   const deferShowForDesktopSizing = useDesktopWindowType && showImmediately;
   const { bounds: storedBounds, isMaximized: storedMaximized } = getStoredWindowState();
-  const windowBounds = useWallpaperGeometry
-    ? screen.getPrimaryDisplay().bounds
-    : ensureWindowBoundsVisible(storedBounds);
+  // Wallpaper geometry (both branches) covers the *whole* display, not just its work area: the
+  // wallpaper belongs behind the taskbar as well. X11 stays on the primary display; Windows
+  // follows the display the app window is on (see windowsWallpaperTarget.cjs).
+  const wallpaperBounds = useWallpaperGeometry
+    ? (useWindowsWallpaper ? getWallpaperTargetBounds() : screen.getPrimaryDisplay().bounds)
+    : null;
+  const windowBounds = wallpaperBounds || ensureWindowBoundsVisible(storedBounds);
   const isMaximized = useWallpaperGeometry ? false : storedMaximized;
   // Classic-desktop wallpaper windows must be opaque (see the attach-mode note above); the
   // window remembers what it was built as so the reconcile path can detect mismatches.
@@ -5031,7 +5002,7 @@ function createWindow(options = {}) {
   // caller (e.g. recreateMainWindowWithTransparencyMode) owns the show, but the bounds fix still
   // applies so the window is full-size by the time it appears.
   if (useWallpaperGeometry) {
-    win.setBounds(screen.getPrimaryDisplay().bounds);
+    win.setBounds(wallpaperBounds);
   }
   if (deferShowForDesktopSizing) {
     win.show();
@@ -5062,6 +5033,14 @@ function createWindow(options = {}) {
   });
   win.on('move', () => {
     saveWindowState(win, { deferred: true });
+  });
+  // macOS completes fullscreen asynchronously; notify after the native transition, including
+  // transitions initiated by the system menu or keyboard instead of the titlebar button.
+  win.on('enter-full-screen', () => {
+    win.webContents.send('window-fullscreen-changed', true);
+  });
+  win.on('leave-full-screen', () => {
+    win.webContents.send('window-fullscreen-changed', false);
   });
   win.on('maximize', () => {
     saveWindowState(win);
@@ -5129,6 +5108,13 @@ function recreateMainWindowWithTransparencyMode(enabled, handoff = null) {
 
   const previousWindow = mainWindow;
   saveWindowState(previousWindow);
+  // Capture the monitor the app window is on *before* it is destroyed: the wallpaper window that
+  // replaces it must land on that display, and a maximized window never updates WINDOW_BOUNDS, so
+  // the stored geometry alone would resolve the wrong monitor. No-op when the outgoing window is
+  // itself a wallpaper window (a rebuild inside an active session keeps the session target).
+  if (reattachWindowsWallpaper) {
+    windowsWallpaperTarget.rememberFromWindow(previousWindow);
+  }
   mainWindow = null;
 
   // Wallpaper mode: windowtolayer only hands the layer surface to a window created while no
@@ -5341,16 +5327,15 @@ app.whenReady().then(async () => {
     // Display changes arrive as event bursts with different shapes: a resolution edit emits
     // display-metrics-changed, but a topology switch (monitor plug/unplug, Win+P, lid) emits
     // only display-removed + display-added — a metrics-changed listener alone misses it and the
-    // wallpaper keeps the dead monitor's size. Coalesce the burst and re-assert the geometry
-    // once it settles: DIP bounds follow getPrimaryDisplay(), physical geometry is delegated to
-    // the helper `move` (MonitorFromWindow also covers the window sitting on a removed display).
+    // wallpaper keeps the dead monitor's size. Coalesce the burst and re-assert the geometry once
+    // it settles. The helper owns the geometry of an attached window: setBounds would be applied
+    // to a *child* of the WorkerW, where Windows interprets the coordinates in the parent's client
+    // space (which is what puts the wallpaper on its host's display), so only the helper re-fills
+    // the monitor the window is on.
     let wallpaperGeometryTimer = null;
     const reassertWallpaperGeometry = () => {
       if (!isWindowsWallpaperMode() || !windowsWallpaper.isAttached()) {
         return;
-      }
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.setBounds(screen.getPrimaryDisplay().bounds);
       }
       const helperPath = resolveWallpaperHelperPath();
       const hwnd = getMainWindowNativeHwnd();
@@ -5982,6 +5967,23 @@ ipcMain.handle('get-netease-api-status', () => {
   return neteaseApiStatus;
 });
 
+// 扫码登录失败后，渲染进程用它生成可以直接贴进 issue 的诊断信息；内容不含 cookie、token 和 IP。
+ipcMain.handle('get-netease-login-diagnostics', () => ({
+  app: {
+    version: app.getVersion(),
+    electron: process.versions.electron,
+    platform: process.platform,
+    arch: process.arch,
+    osRelease: os.release(),
+  },
+  apiStatus: {
+    status: neteaseApiStatus.status,
+    port: neteaseApiStatus.port,
+    error: neteaseApiStatus.error,
+  },
+  ...neteaseLoginDiagnostics.snapshot(),
+}));
+
 // Retrieve dynamic port of the embedded QQ API server; null until it is running.
 ipcMain.handle('get-qq-port', () => qqApiStatus.port);
 
@@ -6078,6 +6080,13 @@ ipcMain.handle('window-is-maximized', () => {
   }
 
   return mainWindow.isMaximized();
+});
+
+ipcMain.handle('window-is-fullscreen', (event) => {
+  if (!isTrustedMainWindowContents(event.sender) || !mainWindow || mainWindow.isDestroyed()) {
+    return false;
+  }
+  return mainWindow.isFullScreen();
 });
 
 ipcMain.handle('window-get-transparent-mode', (event) => {
@@ -6621,34 +6630,20 @@ ipcMain.handle('generate-theme', async (event, lyricsText, options = {}) => {
     let dualTheme = null;
 
     if (provider === 'openai') {
-      const apiKey = store.get('OPENAI_API_KEY');
-      const apiUrl = normalizeOpenAIChatCompletionsUrl(store.get('OPENAI_API_URL'));
-      const model = resolveOpenAICompatibleModel(apiUrl, store.get('OPENAI_API_MODEL'));
-      const temperature = resolveOpenAICompatibleTemperature(store.get('OPENAI_API_TEMPERATURE'));
-      const openAICompatibleProvider = detectOpenAICompatibleProvider(apiUrl, model);
       const systemPrompt = buildThemeSystemPrompt(true);
       const sourcePrompt = buildThemeSourcePrompt(snippet, isPureMusic, songTitle);
-
-      if (!apiKey) {
-        throw new Error("OPENAI_API_KEY is not configured in settings");
-      }
-
-      const response = await customFetch(apiUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(buildOpenAICompatibleRequestBody(model, openAICompatibleProvider, systemPrompt, sourcePrompt, temperature, THEME_JSON_SCHEMA, THEME_JSON_SCHEMA_NAME)),
+      const apiUrl = normalizeOpenAIChatCompletionsUrl(store.get('OPENAI_API_URL'));
+      const content = await runAiJsonCompletion({
+        store,
+        systemPrompt,
+        sourcePrompt,
+        schema: THEME_JSON_SCHEMA,
+        schemaName: THEME_JSON_SCHEMA_NAME,
+        customFetch,
+        maxTokens: detectOpenAICompatibleProvider(apiUrl) === 'openai'
+          ? THEME_MAX_OUTPUT_TOKENS
+          : 8192,
       });
-
-      if (!response.ok) {
-        throw new Error(await formatOpenAICompatibleError(response));
-      }
-
-      const data = await response.json();
-      const content = extractResponseContentText(data.choices[0]?.message);
-      if (!content) throw new Error("Failed to generate theme JSON");
 
       let jsonStr = content.trim();
       if (jsonStr.startsWith('```')) {

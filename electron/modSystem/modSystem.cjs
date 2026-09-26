@@ -1,8 +1,9 @@
 // electron/modSystem/modSystem.cjs
-// The Folia mod loader: discovers mods from the mods directories, validates
-// manifests, resolves dependencies, activates each mod in a sandboxed error
-// boundary, and bridges declared commands/rendering into the renderer over IPC.
-// Designed to fail per-mod instead of crashing the host application.
+// The Folium mod loader (Node side): discovers mods from the mods directories,
+// validates manifests, resolves dependencies, activates each mod's `main` entry
+// in a per-mod error boundary, and serves the renderer half (`client` entries,
+// rpc, storage) over IPC and the folia-mod:// protocol. Designed to fail per-mod
+// instead of crashing the host application.
 //
 // Trust model: a mod runs only after the user confirms it in a main-process
 // dialog, and that confirmation is bound to the mod's content digest. Mods run
@@ -10,6 +11,10 @@
 // boundary — it lives here rather than in the renderer precisely because a
 // loaded mod shares the renderer with the app UI and could otherwise drive its
 // own approval.
+//
+// Official signatures (modSignature.cjs) only label a mod as verified, unsigned
+// or invalid, in that dialog and in the mods panel. They never enable a mod or
+// skip the confirmation.
 
 'use strict';
 
@@ -20,15 +25,34 @@ const { dialog, ipcMain, protocol, shell } = require('electron');
 const Store = require('electron-store').default || require('electron-store');
 const { unzipSync } = require('fflate');
 
-const { validateManifest, resolveLoadPlan } = require('./manifest.cjs');
+const { FOLIUM_VERSION, validateManifest, resolveLoadPlan, satisfiesHostRange, parseDependency } = require('./manifest.cjs');
 const { computeModDigest, shortDigest } = require('./modDigest.cjs');
-const { createModApi } = require('./modApi.cjs');
+const { verifyModSignature } = require('./modSignature.cjs');
+const { createModApi, createModDataStore, STORAGE_PERMISSION } = require('./modApi.cjs');
+const { createFileGrantStore } = require('./fileGrants.cjs');
 const { resolveFfmpeg, MODS_RUNTIME_DIR } = require('./ffmpeg.cjs');
 const { createExportService } = require('./exportService.cjs');
 const { attachModProtocolHandler } = require('./modProtocol.cjs');
 
 const SETTINGS_NAMESPACE = 'mods';
 const EXPORT_PERMISSION = 'render.export';
+const NET_FETCH_PERMISSION = 'net.fetch';
+
+// folium.net.fetch limits: a mod fetches small JSON/text, not downloads.
+const NET_FETCH_LIMITS = {
+    defaultTimeoutMs: 15000,
+    maxTimeoutMs: 60000,
+    maxBodyBytes: 5 * 1024 * 1024,
+    methods: new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD']),
+};
+
+// folium.ui.pickFile dialog filters.
+const PICK_FILE_FILTERS = {
+    video: [{ name: 'Video', extensions: ['mp4', 'm4v', 'webm', 'mov', 'mkv'] }],
+    audio: [{ name: 'Audio', extensions: ['mp3', 'm4a', 'flac', 'ogg', 'wav'] }],
+    image: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif'] }],
+    any: [],
+};
 
 // Staged installs and their rollback copies live under this directory inside
 // the user mods folder; discovery skips it (and every other dot-directory).
@@ -59,7 +83,17 @@ const TRUST_DIALOG_LOCALE = {
         noPermissions: '声明的权限：无',
         location: '安装位置：',
         fingerprint: '内容指纹：',
+        client: '界面代码：',
+        noClient: '界面代码：无',
+        experimental: '选用的实验接口：',
+        embedOrigins: '可嵌入的外部网页：',
+        internals: '使用内部接口，仅兼容宿主版本：',
+        verifiedRisk: '此模组带有有效的 Folium 官方签名，来源与内容已经过官方审查，且签名后未被修改。启用后它仍以应用的完整权限运行：可读写本地文件、访问网络、读取或修改任意应用设置（包括 AI 服务地址与密钥），并可在界面中执行代码。',
+        signatureVerified: (key) => `签名：官方认证（${key}）`,
+        signatureUnsigned: '签名：无（未经官方审查的第三方模组）',
+        signatureInvalid: (reason) => `签名：不匹配（${reason}）。模组内容在签名后被修改，或签名无效，它不再是官方认证的模组。`,
         rebind: '本次确认仅对当前文件内容生效；模组文件发生变化后需要重新确认。',
+        devSource: '开发模式：这个模组位于源码目录的 mods/ 中，确认后修改它的文件不会撤销本次确认。安装版和用户模组目录中的模组没有这项豁免。',
         enable: '仍要启用',
         cancel: '取消',
     },
@@ -71,7 +105,17 @@ const TRUST_DIALOG_LOCALE = {
         noPermissions: 'Declared permissions: none',
         location: 'Installed at: ',
         fingerprint: 'Content fingerprint: ',
+        client: 'UI code: ',
+        noClient: 'UI code: none',
+        experimental: 'Experimental APIs opted into: ',
+        embedOrigins: 'External pages it may embed: ',
+        internals: 'Uses internal APIs; only compatible with host versions: ',
+        verifiedRisk: 'This mod carries a valid official Folium signature: its source and content were reviewed by Folium and have not changed since signing. Once enabled it still runs with the full privileges of the app: it can read and write local files, access the network, read or change any app setting (including the AI service URL and key), and run code inside the UI.',
+        signatureVerified: (key) => `Signature: officially verified (${key})`,
+        signatureUnsigned: 'Signature: none (a third-party mod not reviewed by Folium)',
+        signatureInvalid: (reason) => `Signature: does not match (${reason}). The mod was changed after signing, or the signature is invalid; it is no longer an officially verified mod.`,
         rebind: 'This confirmation applies to the current files only; the mod must be confirmed again after its code changes.',
+        devSource: 'Development mode: this mod is in the source tree\'s mods/ directory, so editing its files after this confirmation does not revoke it. Installed builds and the user mods directory have no such exemption.',
         enable: 'Enable anyway',
         cancel: 'Cancel',
     },
@@ -83,7 +127,17 @@ const TRUST_DIALOG_LOCALE = {
         noPermissions: 'Izin yang dideklarasikan: tidak ada',
         location: 'Terpasang di: ',
         fingerprint: 'Sidik konten: ',
+        client: 'Kode antarmuka: ',
+        noClient: 'Kode antarmuka: tidak ada',
+        experimental: 'API eksperimental yang dipakai: ',
+        embedOrigins: 'Halaman eksternal yang dapat disematkan: ',
+        internals: 'Memakai API internal; hanya kompatibel dengan versi host: ',
+        verifiedRisk: 'Mod ini memiliki tanda tangan resmi Folium yang valid: sumber dan isinya telah ditinjau oleh Folium dan tidak berubah sejak ditandatangani. Setelah diaktifkan, mod tetap berjalan dengan hak penuh aplikasi: dapat membaca dan menulis berkas lokal, mengakses jaringan, membaca atau mengubah pengaturan apa pun (termasuk URL dan kunci layanan AI), serta menjalankan kode di dalam antarmuka.',
+        signatureVerified: (key) => `Tanda tangan: terverifikasi resmi (${key})`,
+        signatureUnsigned: 'Tanda tangan: tidak ada (mod pihak ketiga yang belum ditinjau Folium)',
+        signatureInvalid: (reason) => `Tanda tangan: tidak cocok (${reason}). Mod diubah setelah ditandatangani, atau tanda tangannya tidak valid; mod ini bukan lagi mod terverifikasi resmi.`,
         rebind: 'Konfirmasi ini hanya berlaku untuk berkas saat ini; mod harus dikonfirmasi ulang setelah kodenya berubah.',
+        devSource: 'Mode pengembangan: mod ini ada di direktori mods/ pada kode sumber, jadi mengubah berkasnya setelah konfirmasi ini tidak membatalkannya. Build terpasang dan direktori mod pengguna tidak mendapat pengecualian ini.',
         enable: 'Tetap aktifkan',
         cancel: 'Batal',
     },
@@ -93,7 +147,12 @@ const IPC = {
     list: 'folia-mods:list',
     setEnabled: 'folia-mods:set-enabled',
     reload: 'folia-mods:reload',
-    invoke: 'folia-mods:invoke',
+    rpc: 'folia-mods:rpc',
+    storage: 'folia-mods:storage',
+    netFetch: 'folia-mods:net-fetch',
+    pickFile: 'folia-mods:pick-file',
+    restoreFile: 'folia-mods:restore-file',
+    releaseFile: 'folia-mods:release-file',
     pushRuntimeSnapshot: 'folia-mods:push-runtime-snapshot',
     exportCancel: 'folia-mods:export-cancel',
     ffmpegStatus: 'folia-mods:ffmpeg-status',
@@ -110,7 +169,7 @@ const cloneJson = (value) => JSON.parse(JSON.stringify(value));
  * Drops every cached module that lives inside a mod directory, not just its
  * entry file. Clearing only the entry left a mod's own helper modules cached,
  * so editing them and hitting "reload" kept running the previous code — the
- * Node-side twin of the ES module map problem the visualizer URLs solve with a
+ * Node-side twin of the ES module map problem the client URLs solve with a
  * digest. Windows paths are compared case-insensitively because require.cache
  * keys and readdir paths can disagree on case.
  */
@@ -132,6 +191,19 @@ const serializeError = (error) => {
     return error && error.message ? error.message : String(error);
 };
 
+/*
+ * The renderer-facing signature state: plain JSON, with unknown or missing
+ * values as null. A mod the loader never checked (a broken manifest) reads as
+ * unsigned.
+ */
+const publicSignatureState = (signature) => ({
+    status: signature?.status ?? 'unsigned',
+    reason: signature?.reason ?? null,
+    keyId: signature?.keyId ?? null,
+    keyLabel: signature?.keyLabel ?? null,
+    signedAt: signature?.signedAt ?? null,
+});
+
 const createModSystem = ({ app, BrowserWindow, getMainWindow, getLocaleKey, isFeatureEnabled }) => {
     let store = null;
     try {
@@ -147,6 +219,11 @@ const createModSystem = ({ app, BrowserWindow, getMainWindow, getLocaleKey, isFe
     }
 
     const enabledKey = (modId) => `${SETTINGS_NAMESPACE}.enabled.${modId}`;
+    const fileGrantsKey = (modId) => `${SETTINGS_NAMESPACE}.fileGrants.${modId}`;
+    const fileGrants = createFileGrantStore({
+        readGrants: (modId) => store.get(fileGrantsKey(modId)),
+        writeGrants: (modId, grants) => store.set(fileGrantsKey(modId), grants),
+    });
 
     const mods = new Map();       // modId -> runtime entry
     let runtimeSnapshot = null;   // last snapshot pushed by the renderer
@@ -197,29 +274,54 @@ const createModSystem = ({ app, BrowserWindow, getMainWindow, getLocaleKey, isFe
         sendToRenderer(IPC.fLog, { modId, level, message: String(message), details: details ? serializeError(details) : undefined });
     };
 
+    const hostInfo = () => ({
+        folium: { major: FOLIUM_VERSION.major, minor: FOLIUM_VERSION.minor },
+        folia: typeof app.getVersion === 'function' ? app.getVersion() : null,
+    });
+
+    /*
+     * The Folium DTO half of the last snapshot the renderer pushed. The other
+     * half (`internal`) is host-private and only feeds the export service.
+     * The renderer pushes on changes, not every frame, so while playing the
+     * position is extrapolated from the push time (capped at the duration).
+     */
+    const getPublicSnapshot = () => {
+        if (!runtimeSnapshot?.public) {
+            return null;
+        }
+        const snapshot = cloneJson(runtimeSnapshot.public);
+        const capturedAt = Number(runtimeSnapshot.capturedAt);
+        if (snapshot.state === 'playing' && Number.isFinite(capturedAt)) {
+            const advanced = snapshot.position + Math.max(0, Date.now() - capturedAt) / 1000;
+            snapshot.position = snapshot.duration > 0 ? Math.min(snapshot.duration, advanced) : advanced;
+        }
+        return snapshot;
+    };
+
     const buildModRuntime = (manifest, entries) => {
         const dataDir = path.join(app.getPath('userData'), 'mods-data', manifest.id);
-        let modApi = null;
-        const commandRegistry = new Map();
+        const dataStore = createModDataStore(dataDir);
+        const rpcHandlers = new Map();
         const disposers = [];
 
         const context = {
             modId: manifest.id,
             manifest,
-            dataDir,
+            dataStore,
+            hostInfo: hostInfo(),
             emitLog: (level, message, details) => emitLog(manifest.id, level, message, details),
-            getRuntimeSnapshot: () => (runtimeSnapshot ? cloneJson(runtimeSnapshot) : null),
+            getPlaybackSnapshot: getPublicSnapshot,
             registerDisposer: (disposer) => {
                 if (typeof disposer !== 'function') {
-                    throw new Error('[ModApi] lifecycle.onDeactivate requires a function');
+                    throw new Error('lifecycle.onDeactivate requires a function');
                 }
                 disposers.push(disposer);
             },
-            registerCommand: (command) => {
-                if (commandRegistry.has(command.id)) {
-                    throw new Error(`duplicate command id "${command.id}"`);
+            registerRpc: (name, handler) => {
+                if (rpcHandlers.has(name)) {
+                    throw new Error(`duplicate rpc handler "${name}"`);
                 }
-                commandRegistry.set(command.id, command);
+                rpcHandlers.set(name, handler);
             },
             requestExport: (spec) => {
                 if (!manifest.permissions.includes(EXPORT_PERMISSION)) {
@@ -228,6 +330,7 @@ const createModSystem = ({ app, BrowserWindow, getMainWindow, getLocaleKey, isFe
                 return exportService.runExport({
                     modId: manifest.id,
                     spec,
+                    hostState: runtimeSnapshot?.internal ?? null,
                     onProgress: (progress) => {
                         sendToRenderer(IPC.fExportProgress, { modId: manifest.id, ...progress });
                     },
@@ -235,17 +338,20 @@ const createModSystem = ({ app, BrowserWindow, getMainWindow, getLocaleKey, isFe
             },
         };
 
-        modApi = createModApi(context);
+        const modApi = createModApi(context);
 
+        // A client-only mod has no Node entry: loading it runs nothing here.
         const load = () => {
-            const entryPath = path.join(entries.dirPath, manifest.entry);
+            if (!manifest.main) {
+                return;
+            }
+            const entryPath = path.join(entries.dirPath, manifest.main);
             // Drop the whole mod subtree from the cache so a reload re-executes
-            // the mod against its current files with a fresh command registry
-            // instead of returning stale contributions.
+            // the mod against its current files instead of returning stale state.
             purgeModuleCache(entries.dirPath);
             const moduleFactory = require(entryPath);
             if (typeof moduleFactory !== 'function') {
-                throw new Error(`mod entry must export a function, got ${typeof moduleFactory}`);
+                throw new Error(`mod main must export a function, got ${typeof moduleFactory}`);
             }
             // activate() may return a disposer (or an object carrying one),
             // which joins anything registered through lifecycle.onDeactivate.
@@ -258,11 +364,8 @@ const createModSystem = ({ app, BrowserWindow, getMainWindow, getLocaleKey, isFe
         };
 
         /*
-         * Runs the mod's cleanup before it stops being active. Without this a
-         * disabled mod kept whatever it started in activate() — timers,
-         * watchers, listeners — running until the app restarted, because
-         * dropping the runtime object never touched those closures. Disposers
-         * run last-registered first, and one throwing never blocks the rest.
+         * Runs the mod's cleanup before it stops being active. Disposers run
+         * last-registered first, and one throwing never blocks the rest.
          */
         const unload = () => {
             while (disposers.length > 0) {
@@ -273,10 +376,10 @@ const createModSystem = ({ app, BrowserWindow, getMainWindow, getLocaleKey, isFe
                     emitLog(manifest.id, 'error', 'deactivate handler failed', error);
                 }
             }
-            commandRegistry.clear();
+            rpcHandlers.clear();
         };
 
-        return { load, unload, getCommands: () => commandRegistry };
+        return { load, unload, dataStore, getRpcHandler: (name) => rpcHandlers.get(name) ?? null };
     };
 
     /*
@@ -312,54 +415,61 @@ const createModSystem = ({ app, BrowserWindow, getMainWindow, getLocaleKey, isFe
     };
 
     /*
+     * Development exemption. In an unpackaged build (npm run dev:electron) a mod
+     * in the repository's own mods/ directory, the developer's source tree,
+     * keeps its approval when its files change: the first enable is still
+     * confirmed, later edits rebind the approval to the new bytes instead of
+     * revoking it. Mods under userData or resources never qualify: that is where
+     * files arrive from elsewhere, which is what binding trust to bytes guards
+     * against. A packaged app never scans the repository directory at all.
+     */
+    const isDevSourceMod = (dirPath) => {
+        if (app.isPackaged || typeof dirPath !== 'string') {
+            return false;
+        }
+        const relative = path.relative(path.join(app.getAppPath(), 'mods'), dirPath);
+        return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+    };
+
+    /*
      * Decides whether a discovered mod may run. Trust is granted to bytes, not
      * to a mod id: when the digest moved (an upgrade dropped in over the old
      * copy, an edited file, or a legacy record with no digest at all) the
      * approval is revoked on the spot and the mod stays off until the user
-     * confirms the new code.
+     * confirms the new code. The one exception is a development source mod
+     * (isDevSourceMod) that was already confirmed: its approval follows the edit.
      */
-    const resolveTrust = (modId, digest) => {
+    const resolveTrust = (modId, digest, { devSource = false } = {}) => {
         const stored = readTrust(modId);
         if (!stored || !stored.enabled) {
             return { enabled: false, trustStale: false };
         }
         if (!digest || stored.digest !== digest) {
+            if (devSource && digest && stored.digest) {
+                writeTrust(modId, true, digest);
+                console.info(`[ModSystem] ${modId}: files changed in the development source tree; approval kept`);
+                return { enabled: true, trustStale: false };
+            }
             writeTrust(modId, false, null);
             return { enabled: false, trustStale: true };
         }
         return { enabled: true, trustStale: false };
     };
 
-    // folia-mod:// URL for a visualizer contribution. The digest is carried as a
+    // folia-mod:// URL for a mod's client entry. The digest is carried as a
     // version query so the renderer's ES module map treats a changed mod as a
     // different module instead of replaying the code it already imported.
-    const visualizerUrl = (runtime, visualizer) =>
-        `folia-mod://${runtime.manifest.id}/${visualizer.entry}?v=${shortDigest(runtime.digest)}`;
+    const clientUrl = (runtime) => (
+        runtime.manifest.client
+            ? `folia-mod://${runtime.manifest.id}/${runtime.manifest.client}?v=${shortDigest(runtime.digest)}`
+            : null
+    );
 
     const publicModState = (runtime) => {
         const entry = mods.get(runtime.manifest.id);
         if (!entry) {
             return null;
         }
-        const commands = Array.from(entry.getCommands().values()).map((command) => ({
-            id: command.id,
-            label: cloneJson(command.label ?? { 'zh-CN': command.id }),
-            description: cloneJson(command.description ?? {}),
-            params: cloneJson(command.params ?? []),
-            permissions: cloneJson(command.permissions ?? []),
-        }));
-        // Visualizer contributions are only exposed for mods that are enabled
-        // and loaded; the protocol handler enforces the same rule per request.
-        const visualizers = entry.status === 'loaded' && Array.isArray(entry.manifest.visualizers)
-            ? entry.manifest.visualizers.map((visualizer) => ({
-                id: visualizer.id,
-                mode: `mod:${entry.manifest.id}:${visualizer.id}`,
-                entry: visualizer.entry,
-                url: visualizerUrl(entry, visualizer),
-                label: cloneJson(visualizer.label ?? {}),
-                order: visualizer.order,
-            }))
-            : [];
         return {
             id: entry.manifest.id,
             name: entry.manifest.name,
@@ -367,30 +477,30 @@ const createModSystem = ({ app, BrowserWindow, getMainWindow, getLocaleKey, isFe
             author: entry.manifest.author,
             description: entry.manifest.description,
             permissions: entry.manifest.permissions,
+            experimental: entry.manifest.experimental ?? [],
+            embedOrigins: entry.manifest.embedOrigins ?? [],
+            folia: entry.manifest.folia ?? null,
+            hasMain: Boolean(entry.manifest.main),
+            // Client entries are only exposed for mods that are enabled and
+            // loaded; the protocol handler enforces the same rule per request.
+            clientUrl: entry.status === 'loaded' ? clientUrl(entry) : null,
             status: entry.status,
             error: entry.error,
             enabled: entry.enabled,
             trustStale: Boolean(entry.trustStale),
-            commands,
-            visualizers,
+            signature: publicSignatureState(entry.signature),
+            devSource: Boolean(entry.devSource),
+            // Position in the dependency-resolved load plan; clients activate in this order.
+            loadOrder: typeof entry.loadOrder === 'number' ? entry.loadOrder : null,
         };
     };
 
     /*
-     * Visualizer contributions of every loaded mod, flattened for consumers
-     * that cannot reach the IPC bridge — notably the export window, which runs
-     * without a preload and is handed these descriptors inside its render
-     * config instead of asking for them.
+     * Client entries of every loaded mod, for the export window: it runs without
+     * a preload, so it is handed these descriptors inside its render config and
+     * activates the clients in its own ('export') context.
      */
-    const listVisualizerDescriptors = () => Array.from(mods.values())
-        .filter((runtime) => runtime.status === 'loaded' && Array.isArray(runtime.manifest.visualizers))
-        .flatMap((runtime) => runtime.manifest.visualizers.map((visualizer) => ({
-            mode: `mod:${runtime.manifest.id}:${visualizer.id}`,
-            url: visualizerUrl(runtime, visualizer),
-            label: cloneJson(visualizer.label ?? {}),
-            order: visualizer.order,
-            modName: runtime.manifest.name,
-        })));
+    const listClientDescriptors = () => listMods().filter((mod) => mod.clientUrl);
 
     const getModsDirectories = () => {
         const directories = [];
@@ -408,6 +518,30 @@ const createModSystem = ({ app, BrowserWindow, getMainWindow, getLocaleKey, isFe
         return directories;
     };
 
+    /*
+     * Finds the mod root inside one entry of a mods directory, with the same
+     * rule as a zip install (resolveArchiveRoot): mod.json in the entry itself,
+     * or in exactly one subfolder. A downloaded zip extracted by hand usually
+     * leaves that extra folder (mods/foo-1.0.0/foo/mod.json). Anything else
+     * falls back to the entry, which then reports the missing mod.json.
+     */
+    const resolveModRoot = (entryDirectory) => {
+        if (fs.existsSync(path.join(entryDirectory, 'mod.json'))) {
+            return entryDirectory;
+        }
+        let children = [];
+        try {
+            children = fs.readdirSync(entryDirectory, { withFileTypes: true });
+        } catch {
+            return entryDirectory;
+        }
+        const candidates = children
+            .filter((child) => child.isDirectory() && !child.name.startsWith('.'))
+            .map((child) => path.join(entryDirectory, child.name))
+            .filter((childDirectory) => fs.existsSync(path.join(childDirectory, 'mod.json')));
+        return candidates.length === 1 ? candidates[0] : entryDirectory;
+    };
+
     const readManifestFiles = () => {
         const discovered = new Map();
         const seenIds = new Set();
@@ -421,7 +555,7 @@ const createModSystem = ({ app, BrowserWindow, getMainWindow, getLocaleKey, isFe
             // Dot-directories are the loader's own bookkeeping (staged installs
             // and rollback copies), never mods.
             dirEntries.filter((entry) => entry.isDirectory() && !entry.name.startsWith('.')).forEach((entry) => {
-                const modDirectory = path.join(dirPath, entry.name);
+                const modDirectory = resolveModRoot(path.join(dirPath, entry.name));
                 const manifestPath = path.join(modDirectory, 'mod.json');
                 let raw = null;
                 try {
@@ -464,7 +598,11 @@ const createModSystem = ({ app, BrowserWindow, getMainWindow, getLocaleKey, isFe
         author: discovery.manifest?.author ?? null,
         description: discovery.manifest?.description ?? null,
         permissions: [],
-        visualizers: [],
+        experimental: [],
+        embedOrigins: [],
+        folia: null,
+        main: null,
+        client: null,
     });
 
     /*
@@ -509,12 +647,15 @@ const createModSystem = ({ app, BrowserWindow, getMainWindow, getLocaleKey, isFe
             }
             const modId = discovery.manifest.id;
             const digest = computeModDigest(discovery.dirPath);
-            const trust = resolveTrust(modId, digest);
+            const devSource = isDevSourceMod(discovery.dirPath);
+            const trust = resolveTrust(modId, digest, { devSource });
             manifestsById.set(modId, discovery.manifest);
             prepared.set(modId, {
                 manifest: discovery.manifest,
                 dirPath: discovery.dirPath,
                 digest,
+                signature: verifyModSignature(discovery.dirPath, discovery.manifest),
+                devSource,
                 enabled: trust.enabled,
                 trustStale: trust.trustStale,
             });
@@ -540,6 +681,8 @@ const createModSystem = ({ app, BrowserWindow, getMainWindow, getLocaleKey, isFe
             manifest: entry.manifest,
             dirPath: entry.dirPath,
             digest: entry.digest,
+            signature: entry.signature,
+            devSource: entry.devSource,
             status,
             error,
             enabled: entry.enabled,
@@ -548,8 +691,34 @@ const createModSystem = ({ app, BrowserWindow, getMainWindow, getLocaleKey, isFe
         });
 
         const nextMods = new Map();
-        plan.order.forEach((modId) => {
+        const hostVersion = typeof app.getVersion === 'function' ? app.getVersion() : null;
+        plan.order.forEach((modId, loadOrder) => {
             const runtime = buildEntry(prepared.get(modId), 'disabled', null);
+            runtime.loadOrder = loadOrder;
+            // The plan is topological, so every dependency has already been
+            // tried. One that did not load (host-version mismatch, a throwing
+            // main) fails its dependents too instead of leaving them running
+            // against a dependency that never ran.
+            const failedDependencies = runtime.manifest.depends
+                .map((dependency) => parseDependency(dependency).id)
+                .filter((dependencyId) => nextMods.get(dependencyId)?.status !== 'loaded');
+            if (failedDependencies.length > 0) {
+                runtime.status = 'dependency-failed';
+                runtime.error = failedDependencies
+                    .map((dependencyId) => `dependency "${dependencyId}" required by "${modId}" failed to load`)
+                    .join('; ');
+                nextMods.set(modId, runtime);
+                return;
+            }
+            // A mod pinned to host versions (it uses folium.internals) never runs
+            // on a host outside that range: internals carry no compatibility promise.
+            const range = runtime.manifest.folia;
+            if (range && !satisfiesHostRange(hostVersion, range)) {
+                runtime.status = 'error';
+                runtime.error = 'host-version-mismatch';
+                nextMods.set(modId, runtime);
+                return;
+            }
             try {
                 runtime.load();
                 runtime.status = 'loaded';
@@ -585,7 +754,7 @@ const createModSystem = ({ app, BrowserWindow, getMainWindow, getLocaleKey, isFe
                 error: (discovery.validationErrors ?? ['invalid manifest']).join('; '),
                 enabled: false,
                 trustStale: false,
-                getCommands: () => new Map(),
+                getRpcHandler: () => null,
             });
         });
 
@@ -597,21 +766,32 @@ const createModSystem = ({ app, BrowserWindow, getMainWindow, getLocaleKey, isFe
 
     /*
      * The enable confirmation. Native and main-process owned on purpose: a
-     * loaded mod's visualizer shares the renderer with the app UI, so a dialog
+     * loaded mod's client code shares the renderer with the app UI, so a dialog
      * drawn there could be spoofed or dismissed by mod code. This one cannot,
      * and it is the only path that writes an "enabled" trust record.
      */
-    const confirmEnableMod = async (runtime, digest) => {
+    const confirmEnableMod = async (runtime, digest, signature) => {
         const locale = resolveDialogLocale();
+        const signatureLine = signature.status === 'verified'
+            ? locale.signatureVerified(signature.keyLabel ? `${signature.keyLabel}, ${signature.keyId}` : signature.keyId)
+            : signature.status === 'invalid'
+                ? locale.signatureInvalid(signature.reason ?? 'invalid')
+                : locale.signatureUnsigned;
         const permissions = Array.isArray(runtime.manifest.permissions) ? runtime.manifest.permissions : [];
+        const { client, experimental = [], embedOrigins = [], folia } = runtime.manifest;
         const detail = [
-            locale.risk,
+            signature.status === 'verified' ? locale.verifiedRisk : locale.risk,
             '',
+            signatureLine,
             permissions.length > 0 ? `${locale.permissions}${permissions.join(', ')}` : locale.noPermissions,
+            client ? `${locale.client}${client}` : locale.noClient,
+            ...(experimental.length > 0 ? [`${locale.experimental}${experimental.join(', ')}`] : []),
+            ...(embedOrigins.length > 0 ? [`${locale.embedOrigins}${embedOrigins.join(', ')}`] : []),
+            ...(folia ? [`${locale.internals}${folia}`] : []),
             `${locale.location}${runtime.dirPath ?? '-'}`,
             `${locale.fingerprint}${shortDigest(digest)}`,
             '',
-            locale.rebind,
+            isDevSourceMod(runtime.dirPath) ? locale.devSource : locale.rebind,
         ].join('\n');
         const options = {
             type: 'warning',
@@ -653,7 +833,9 @@ const createModSystem = ({ app, BrowserWindow, getMainWindow, getLocaleKey, isFe
         if (!digest) {
             return { ok: false, error: 'mod-content-unverifiable', mods: listMods() };
         }
-        const confirmed = await confirmEnableMod(runtime, digest);
+        // Same moment as the digest: the label must describe the bytes being approved.
+        const signature = verifyModSignature(runtime.dirPath, runtime.manifest);
+        const confirmed = await confirmEnableMod(runtime, digest, signature);
         if (!confirmed) {
             return { ok: false, error: 'enable-declined', mods: listMods() };
         }
@@ -661,31 +843,209 @@ const createModSystem = ({ app, BrowserWindow, getMainWindow, getLocaleKey, isFe
         return { ok: true, mods: loadAll() };
     };
 
-    const invokeModCommand = async (modId, commandId, params) => {
+    const requireLoadedMod = (modId) => {
         const runtime = mods.get(modId);
         if (!runtime) {
-            return { ok: false, error: 'mod-not-found' };
+            throw new Error('mod-not-found');
         }
         if (runtime.status !== 'loaded') {
-            return { ok: false, error: 'mod-not-loaded' };
+            throw new Error('mod-not-loaded');
         }
-        const command = runtime.getCommands().get(commandId);
-        if (!command) {
-            return { ok: false, error: 'command-not-found' };
-        }
-        const missingPermissions = (command.permissions ?? []).filter(
-            (permission) => !runtime.manifest.permissions.includes(permission)
-        );
-        if (missingPermissions.length > 0) {
-            return { ok: false, error: `permission-denied:${missingPermissions.join(',')}` };
+        return runtime;
+    };
+
+    // client → main call routed to the handler the mod registered with api.rpc.handle.
+    const invokeModRpc = async (modId, name, args) => {
+        const runtime = requireLoadedMod(modId);
+        const handler = runtime.getRpcHandler(name);
+        if (!handler) {
+            return { ok: false, error: `rpc-not-found:${name}` };
         }
         try {
-            const result = await command.run(params ?? {}, { snapshot: runtimeSnapshot ? cloneJson(runtimeSnapshot) : null });
-            return { ok: true, result };
+            const result = await handler(...(Array.isArray(args) ? args : []));
+            return { ok: true, result: result === undefined ? null : cloneJson(result) };
         } catch (error) {
-            emitLog(modId, 'error', `command ${commandId} failed`, error);
+            emitLog(modId, 'error', `rpc ${name} failed`, error);
             return { ok: false, error: serializeError(error) };
         }
+    };
+
+    /*
+     * folium.net.fetch: the request runs here, in Node, so it is not subject to
+     * the renderer's CORS rules — which is why it sits behind `net.fetch`.
+     * http(s) only, bounded time and body size, text bodies only.
+     */
+    const invokeModNetFetch = async (modId, url, init) => {
+        const runtime = requireLoadedMod(modId);
+        if (!runtime.manifest.permissions.includes(NET_FETCH_PERMISSION)) {
+            return { ok: false, error: `permission-denied:${NET_FETCH_PERMISSION}` };
+        }
+        let target;
+        try {
+            target = new URL(String(url));
+        } catch {
+            return { ok: false, error: 'net-invalid-url' };
+        }
+        if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+            return { ok: false, error: 'net-unsupported-protocol' };
+        }
+        const options = init && typeof init === 'object' ? init : {};
+        const method = String(options.method ?? 'GET').toUpperCase();
+        if (!NET_FETCH_LIMITS.methods.has(method)) {
+            return { ok: false, error: `net-unsupported-method:${method}` };
+        }
+        const timeoutMs = Math.min(
+            NET_FETCH_LIMITS.maxTimeoutMs,
+            Math.max(1000, Number(options.timeoutMs) || NET_FETCH_LIMITS.defaultTimeoutMs),
+        );
+        const headers = {};
+        if (options.headers && typeof options.headers === 'object') {
+            Object.entries(options.headers).forEach(([key, value]) => {
+                if (typeof value === 'string') headers[key] = value;
+            });
+        }
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            const response = await fetch(target, {
+                method,
+                headers,
+                body: method === 'GET' || method === 'HEAD' || typeof options.body !== 'string' ? undefined : options.body,
+                signal: controller.signal,
+                redirect: 'follow',
+            });
+            const declaredLength = Number(response.headers.get('content-length'));
+            if (Number.isFinite(declaredLength) && declaredLength > NET_FETCH_LIMITS.maxBodyBytes) {
+                controller.abort();
+                return { ok: false, error: 'net-body-too-large' };
+            }
+            // Content-Length is optional (chunked, compressed), so the limit is
+            // enforced while reading: the body is never buffered past it.
+            const chunks = [];
+            let received = 0;
+            if (response.body) {
+                const reader = response.body.getReader();
+                for (;;) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    received += value.byteLength;
+                    if (received > NET_FETCH_LIMITS.maxBodyBytes) {
+                        await reader.cancel().catch(() => {});
+                        return { ok: false, error: 'net-body-too-large' };
+                    }
+                    chunks.push(Buffer.from(value.buffer, value.byteOffset, value.byteLength));
+                }
+            }
+            const buffer = Buffer.concat(chunks, received);
+            const responseHeaders = {};
+            response.headers.forEach((value, key) => { responseHeaders[key] = value; });
+            return {
+                ok: true,
+                result: {
+                    status: response.status,
+                    statusText: response.statusText,
+                    headers: responseHeaders,
+                    body: buffer.toString('utf8'),
+                },
+            };
+        } catch (error) {
+            return { ok: false, error: controller.signal.aborted ? 'net-timeout' : serializeError(error) };
+        } finally {
+            clearTimeout(timer);
+        }
+    };
+
+    /*
+     * folium.ui.pickFile: the user chooses the file in a native dialog, so no
+     * permission is involved; the mod only ever gets an unguessable
+     * folia-mod://_files/<token>/<name> URL, valid until the app quits.
+     * With `persist` the pick is also recorded as a file grant (fileGrants.cjs)
+     * and the handle carries its opaque id for folium.ui.restoreFile.
+     */
+    const pickedFiles = new Map();
+    // `${modId}:${grantId}` -> session token, so restoring a grant twice in one
+    // session yields the same URL (a media element does not reload for nothing).
+    const grantTokens = new Map();
+
+    const issueFileHandle = (filePath, token = crypto.randomBytes(18).toString('hex')) => {
+        const stat = fs.statSync(filePath);
+        pickedFiles.set(token, filePath);
+        const name = path.basename(filePath);
+        return {
+            token,
+            handle: {
+                url: `folia-mod://_files/${token}/${encodeURIComponent(name)}`,
+                name,
+                size: stat.size,
+            },
+        };
+    };
+
+    const invokeModPickFile = async (modId, accept, persist) => {
+        requireLoadedMod(modId);
+        const win = getMainWindowSafe();
+        const options = {
+            properties: ['openFile'],
+            filters: PICK_FILE_FILTERS[accept] ?? PICK_FILE_FILTERS.any,
+        };
+        const result = win && !win.isDestroyed()
+            ? await dialog.showOpenDialog(win, options)
+            : await dialog.showOpenDialog(options);
+        const filePath = result.canceled ? null : result.filePaths[0];
+        if (!filePath) {
+            return { ok: true, result: null };
+        }
+        const { token, handle } = issueFileHandle(filePath);
+        if (persist !== true) {
+            return { ok: true, result: handle };
+        }
+        const grantId = fileGrants.add(modId, filePath);
+        grantTokens.set(`${modId}:${grantId}`, token);
+        return { ok: true, result: { ...handle, grantId } };
+    };
+
+    /*
+     * folium.ui.restoreFile: a grant this mod holds back as a session URL, or
+     * null when the grant is unknown, belongs to another mod, or its file is
+     * gone (such a grant is dropped).
+     */
+    const invokeModRestoreFile = (modId, grantId) => {
+        requireLoadedMod(modId);
+        const filePath = fileGrants.resolve(modId, grantId);
+        if (!filePath) {
+            grantTokens.delete(`${modId}:${grantId}`);
+            return { ok: true, result: null };
+        }
+        const cacheKey = `${modId}:${grantId}`;
+        const cachedToken = grantTokens.get(cacheKey);
+        const { token, handle } = issueFileHandle(
+            filePath,
+            cachedToken && pickedFiles.get(cachedToken) === filePath ? cachedToken : undefined,
+        );
+        grantTokens.set(cacheKey, token);
+        return { ok: true, result: { ...handle, grantId } };
+    };
+
+    // folium.ui.releaseFile: the grant is forgotten; URLs already handed out stay valid this session.
+    const invokeModReleaseFile = (modId, grantId) => {
+        requireLoadedMod(modId);
+        grantTokens.delete(`${modId}:${grantId}`);
+        return { ok: true, result: fileGrants.release(modId, grantId) };
+    };
+
+    const STORAGE_OPERATIONS = new Set(['get', 'set', 'has', 'delete', 'keys']);
+
+    // folium.storage from the client: same data file and permission as api.storage.data.
+    const invokeModStorage = async (modId, operation, key, value) => {
+        const runtime = requireLoadedMod(modId);
+        if (!runtime.manifest.permissions.includes(STORAGE_PERMISSION)) {
+            return { ok: false, error: `permission-denied:${STORAGE_PERMISSION}` };
+        }
+        if (!STORAGE_OPERATIONS.has(operation)) {
+            return { ok: false, error: `storage-unknown-operation:${operation}` };
+        }
+        const result = await runtime.dataStore[operation](key, value);
+        return { ok: true, result: result === undefined ? null : result };
     };
 
     const listMods = () => Array.from(mods.values())
@@ -826,7 +1186,7 @@ const createModSystem = ({ app, BrowserWindow, getMainWindow, getLocaleKey, isFe
      * Installs a mod from a .zip into the per-user mod directory. The zip may
      * carry mod.json at its root or under exactly one top-level folder. The
      * install is staged: everything is written to a temporary directory next to
-     * the target and verified there (manifest, entry file, declared visualizer
+     * the target and verified there (manifest, declared main/client entry
      * files), and only then swapped into place — an existing install is kept
      * until the replacement is known-good, and restored if the swap fails.
      * Zip-slip is blocked and the archive is size-capped before extraction.
@@ -900,13 +1260,11 @@ const createModSystem = ({ app, BrowserWindow, getMainWindow, getLocaleKey, isFe
             }
 
             // Verify the staged tree before anything replaces a working install.
-            if (!fs.existsSync(path.join(stagingDir, validation.value.entry))) {
-                throw new Error('install-entry-missing');
+            if (validation.value.main && !fs.existsSync(path.join(stagingDir, validation.value.main))) {
+                throw new Error('install-main-missing');
             }
-            for (const visualizer of validation.value.visualizers ?? []) {
-                if (!fs.existsSync(path.join(stagingDir, visualizer.entry))) {
-                    throw new Error('install-visualizer-missing');
-                }
+            if (validation.value.client && !fs.existsSync(path.join(stagingDir, validation.value.client))) {
+                throw new Error('install-client-missing');
             }
 
             // Atomic-ish swap: move the old copy aside, move the new one in, and
@@ -967,8 +1325,8 @@ const createModSystem = ({ app, BrowserWindow, getMainWindow, getLocaleKey, isFe
         BrowserWindow,
         resolveFfmpeg: probeFfmpeg,
         // The export window runs without a preload, so it cannot ask for the
-        // mod visualizer list itself; it is injected with the render config.
-        getModVisualizers: () => listVisualizerDescriptors(),
+        // mod list itself; client descriptors are injected with the render config.
+        getModClients: () => listClientDescriptors(),
     });
 
     // folia-mod:// resolves only enabled, successfully loaded mods. Disabled
@@ -977,7 +1335,7 @@ const createModSystem = ({ app, BrowserWindow, getMainWindow, getLocaleKey, isFe
         const runtime = mods.get(modId);
         return runtime && runtime.status === 'loaded' && runtime.dirPath ? runtime.dirPath : null;
     };
-    attachModProtocolHandler(protocol, resolveModDirectory);
+    attachModProtocolHandler(protocol, resolveModDirectory, (token) => pickedFiles.get(token) ?? null);
 
     pruneStagingDirectory();
 
@@ -1001,7 +1359,12 @@ const createModSystem = ({ app, BrowserWindow, getMainWindow, getLocaleKey, isFe
         handle(IPC.setEnabled, (_event, modId, enabled) => setModEnabled(modId, enabled));
         handle(IPC.reload, () => ({ mods: loadAll() }));
         handle(IPC.exportCancel, () => ({ ok: exportService.cancelActiveExport() }));
-        handle(IPC.invoke, (_event, modId, commandId, params) => invokeModCommand(modId, commandId, params));
+        handle(IPC.rpc, (_event, modId, name, args) => invokeModRpc(modId, name, args));
+        handle(IPC.storage, (_event, modId, operation, key, value) => invokeModStorage(modId, operation, key, value));
+        handle(IPC.netFetch, (_event, modId, url, init) => invokeModNetFetch(modId, url, init));
+        handle(IPC.pickFile, (_event, modId, accept, persist) => invokeModPickFile(modId, accept, persist));
+        handle(IPC.restoreFile, (_event, modId, grantId) => invokeModRestoreFile(modId, grantId));
+        handle(IPC.releaseFile, (_event, modId, grantId) => invokeModReleaseFile(modId, grantId));
         handle(IPC.pushRuntimeSnapshot, (_event, snapshot) => {
             if (snapshot && typeof snapshot === 'object') {
                 runtimeSnapshot = snapshot;
@@ -1024,7 +1387,7 @@ const createModSystem = ({ app, BrowserWindow, getMainWindow, getLocaleKey, isFe
     return {
         loadAll,
         listMods,
-        listVisualizerDescriptors,
+        listClientDescriptors,
         setModEnabled,
         probeFfmpeg,
         registerIpc,

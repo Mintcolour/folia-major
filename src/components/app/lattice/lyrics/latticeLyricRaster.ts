@@ -28,7 +28,8 @@ export function createLatticeRaster(pixi: typeof import('pixi.js')) {
         measured++;
         return size;
     };
-    const rasterize = (text: string, font: string, fontPx: number): { texture: Texture; width: number; height: number; pad: number } => {
+    /** `resolution` is device pixels per CSS pixel of the surface; the texture reports CSS-pixel size. */
+    const rasterize = (text: string, font: string, fontPx: number, resolution: number): { texture: Texture; width: number; height: number; pad: number } => {
         context.font = font;
         const metrics = context.measureText(text);
         const pad = Math.ceil(Math.max(fontPx * 0.5, metrics.actualBoundingBoxLeft, metrics.actualBoundingBoxRight - metrics.width, 2));
@@ -36,12 +37,21 @@ export function createLatticeRaster(pixi: typeof import('pixi.js')) {
         const ascent = Math.max(fontPx, metrics.actualBoundingBoxAscent);
         const height = Math.ceil(ascent + Math.max(fontPx * 0.3, metrics.actualBoundingBoxDescent) + pad * 2);
         const surface = document.createElement('canvas');
-        surface.width = width * 2; surface.height = height * 2;
+        surface.width = Math.ceil(width * resolution); surface.height = Math.ceil(height * resolution);
         const paint = surface.getContext('2d');
         if (!paint) throw new Error('Lattice text texture is unavailable');
-        paint.scale(2, 2); paint.font = font; paint.fillStyle = '#ffffff';
+        paint.scale(resolution, resolution); paint.font = font; paint.fillStyle = '#ffffff';
         paint.fillText(text, pad, pad + ascent);
-        return { texture: new pixi.Texture({ source: new pixi.CanvasSource({ resource: surface, resolution: 2 }) }), width, height, pad };
+        // Construct at resolution 1 and set the real one afterwards. Given `resolution` up front,
+        // CanvasSource derives width = canvas.width / resolution, TextureSource multiplies it back,
+        // and resizeCanvas() compares that float with the integer canvas size using `!==`: for any
+        // resolution whose round trip is inexact (0.76, 1.14, 1.52, 1.75...) it reassigns
+        // canvas.width, which wipes the glyph just painted. The setter only rescales width/height.
+        // Keep the explicit 1: omitted, the derivation divides by undefined and only works because
+        // TextureSource treats the resulting NaN as "no width given".
+        const source = new pixi.CanvasSource({ resource: surface, resolution: 1 });
+        source.resolution = resolution;
+        return { texture: new pixi.Texture({ source }), width, height, pad };
     };
     return { measure, rasterize, clearMeasureCache };
 }

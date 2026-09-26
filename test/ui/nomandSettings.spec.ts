@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { APP_VERSION } from '../helpers/appState';
+import { APP_VERSION, waitForAppMounted } from '../helpers/appState';
 
 // test/ui/nomandSettings.spec.ts
 // Verifies Nomand swaps its effect-specific tuning controls while keeping the shared settings shell.
@@ -10,12 +10,13 @@ test('switches Nomand Paper effects and exposes matching tuning controls', async
         localStorage.setItem('i18nextLng', 'en');
         localStorage.setItem('visualizer_mode', 'classic');
         localStorage.setItem('static_mode', 'true');
-        localStorage.setItem('folia_last_seen_guide_version', version);
+        localStorage.setItem('folia_last_seen_ponder_onboarding_version', version);
     }, APP_VERSION);
     await page.route('**/__mock_netease__/**', async (route) => {
         await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
     });
     await page.goto('/');
+    await waitForAppMounted(page);
     await page.evaluate(async () => {
         const storeModulePath = '/src/stores/useSettingsModalStore.ts';
         const { useSettingsModalStore } = await import(storeModulePath);

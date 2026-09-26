@@ -196,6 +196,12 @@ export default async function viteConfig(_config: ConfigEnv): Promise<UserConfig
     worker: {
       format: 'es'
     },
+    optimizeDeps: {
+      // Only metadataParser.worker.ts imports music-metadata, and the startup dep scan does not
+      // follow worker entries. Left out, the first local import discovers it at runtime, Vite
+      // re-optimizes, and every open page is force-reloaded ("optimized dependencies changed").
+      include: ['music-metadata'],
+    },
     build: {
       rollupOptions: {
         input: {
@@ -209,6 +215,15 @@ export default async function viteConfig(_config: ConfigEnv): Promise<UserConfig
           // must stay under workbox.maximumFileSizeToCacheInBytes to be cached for offline use).
           manualChunks(id) {
             return id.includes('/node_modules/three/') ? 'three' : undefined;
+          },
+          // folium.ui.icon loads each lucide icon as its own chunk (~2000 of them). They live in one
+          // directory so the PWA precache can leave them out: only mods ask for them, and mods run in
+          // the desktop app, which does not go through the service worker.
+          chunkFileNames(chunk) {
+            return chunk.moduleIds.some(id => id.includes('/node_modules/lucide-react/dist/esm/icons/'))
+              && chunk.moduleIds.length === 1
+              ? 'assets/folium-icons/[name]-[hash].js'
+              : 'assets/[name]-[hash].js';
           },
         },
       },
@@ -238,7 +253,7 @@ export default async function viteConfig(_config: ConfigEnv): Promise<UserConfig
         workbox: {
           maximumFileSizeToCacheInBytes: 5000000,
           // Docker serves this file dynamically; it must never be pinned in the PWA precache.
-          globIgnores: ['**/runtime-config.js'],
+          globIgnores: ['**/runtime-config.js', '**/assets/folium-icons/**'],
           // API navigations must reach the deployment platform instead of the SPA shell.
           navigateFallbackDenylist: [/^\/api(?:\/|$)/]
         },

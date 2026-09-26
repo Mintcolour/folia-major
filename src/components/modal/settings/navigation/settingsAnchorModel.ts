@@ -15,14 +15,17 @@ export const SETTINGS_ANCHOR_DEFINITIONS = {
     grid3dCardStyle: { section: 'appearance', labelKey: 'options.grid3dCardStyle' },
     latticeSettings: { section: 'appearance', labelKey: 'options.latticeSettings' },
     gridViewCardSettings: { section: 'appearance', labelKey: 'options.gridViewCardSettings' },
+    videoLayerSettings: { section: 'appearance', labelKey: 'options.videoLayerSettings' },
     importExportTitle: { section: 'appearance', labelKey: 'options.importExportTitle' },
 
-    // GeneralSettingsSubview (PinnedCommandSettings renders inside it)
+    // GeneralSettingsSubview (PinnedCommandSettings and PonderHintSettingsSection render inside it)
     languageSettings: { section: 'general', labelKey: 'options.languageSettings' },
     homeTabsVisibility: { section: 'general', labelKey: 'options.homeTabsVisibility' },
+    rememberHomeCardPosition: { section: 'general', labelKey: 'options.rememberHomeCardPosition' },
     playbackEntryView: { section: 'general', labelKey: 'options.playbackEntryView' },
     bottomUiSettings: { section: 'general', labelKey: 'options.bottomUiSettings' },
     pinnedCommands: { section: 'general', labelKey: 'options.pinnedCommands' },
+    ponderHints: { section: 'general', labelKey: 'options.ponderHints' },
 
     // PlaybackSettingsSubview (TransitionSettingsSection renders inside it)
     queueSettings: { section: 'playback', labelKey: 'options.queueSettings' },
@@ -57,9 +60,15 @@ export const SETTINGS_ANCHOR_DEFINITIONS = {
     updateCheck: { section: 'desktop', labelKey: 'options.updateCheck', electronOnly: true },
     electronSettings: { section: 'desktop', labelKey: 'options.electronSettings', electronOnly: true },
 
+    // GraphicsSettingsSubview
+    graphicsPerformance: { section: 'graphics', labelKey: 'options.labPerformanceSection' },
+    graphicsMotion: { section: 'graphics', labelKey: 'options.reduceMotionSection' },
+
+    // ModsSettingsSubview
+    modSystem: { section: 'mods', labelKey: 'options.enableModSystem', electronOnly: true },
+    modList: { section: 'mods', labelKey: 'mods.title', electronOnly: true },
+
     // LabSettingsModal
-    labPerformance: { section: 'lab', labelKey: 'options.labPerformanceSection' },
-    labMotion: { section: 'lab', labelKey: 'options.reduceMotionSection' },
     labPlayerUi: { section: 'lab', labelKey: 'options.labPlayerUiSection' },
     labWindowAndTools: { section: 'lab', labelKey: 'options.labWindowAndToolsSection' },
 } as const satisfies Record<string, { section: SettingsSubviewId; labelKey: string; electronOnly?: boolean }>;

@@ -49,6 +49,28 @@ export const visualizerCommands: CommandPaletteCommand[] = [
     createVisualizerCommand('cappella', 'Visualizer: Cappella', 'Switch to cappella visualizer', ['cappella', '群唱']),
     createVisualizerCommand('diorama', 'Visualizer: Diorama', 'Switch to Diorama visualizer', ['diorama', '镜台', '切换到可视化：镜台', '切换到可视化镜台']),
     createVisualizerCommand('still', 'Visualizer: Still', 'Switch to the static low-resource visualizer', ['still', 'static', 'low resource', '静止', '静态', '低占用']),
+    createToggleCommand('video-layer-toggle', 'visualizer', 'Video layer behind lyrics', 'Show or hide the muted video layer behind the lyrics', ['video layer', 'background video', 'video behind lyrics', '视频层', '背景视频', '歌词后方视频'], context => context.visualizer.toggleVideoLayer()),
+    defineCommand({
+        id: 'video-layer-pick',
+        group: 'visualizer',
+        title: 'Video layer: pick a local video',
+        description: 'Choose a local video to play behind the lyrics',
+        keywords: ['pick video', 'local video', 'video layer', 'mv', '选择视频', '本地视频', '视频层', '背景视频'],
+        execute: (_input, context) => {
+            void context.visualizer.pickVideoLayerFile().catch((error) => {
+                console.error('[VideoLayer] Failed to pick a video:', error);
+            });
+            return true;
+        },
+    }),
+    createToggleCommand(
+        'visualizer-toggle-glow-blur-quantize',
+        'visualizer',
+        'Fix lyric animation freeze on Linux',
+        'Change how some lyric animations draw their glow, fixing occasional freezes after long playback on Linux',
+        ['lyric freeze', 'freeze fix', 'linux', 'glow', 'fd leak', 'stepped glow', '歌词卡死', '动画卡死', '画面定格', '发光半径分档', '发光', 'faguangbanjing', 'fgbj'],
+        context => context.visualizer.toggleGlowBlurQuantize(),
+    ),
     createToggleCommand('visualizer-toggle-random-per-song', 'visualizer', 'Random visualizer for every song', 'Toggle a random lyric animation mode whenever the song changes', ['random visualizer', 'random animation', 'per song', '随机歌词动画', '每首歌随机动画'], context => context.visualizer.toggleRandomVisualizerModePerSong()),
     {
         id: 'background-monet-full-overlay',

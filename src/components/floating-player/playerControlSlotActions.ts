@@ -1,6 +1,7 @@
 import { ChartBar, Heart, ListMusic, PanelsTopLeft, Repeat, Repeat1, RepeatOff, Shuffle, SkipBack, SkipForward, Timer, Volume2 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { PlayerControlSlotActionId } from '../../types/playerControlSlots';
+import { noteLoopButtonPress } from '../../services/ponder/loopShuffleHint';
 
 // src/components/floating-player/playerControlSlotActions.ts
 // 进度条胶囊右侧两个可自定义槽位的动作清单。
@@ -72,6 +73,13 @@ const resolveLoopIcon = (loopMode: PlayerControlSlotContext['loopMode']): Lucide
     return Repeat;
 };
 
+/** 循环按钮的提示文本反映当前模式。 */
+const resolveLoopLabelKey = (loopMode: PlayerControlSlotContext['loopMode']): string => {
+    if (loopMode === 'off') return 'player.loopOff';
+    if (loopMode === 'one') return 'player.loopOne';
+    return 'player.loopAll';
+};
+
 /**
  * 把一个槽位 id 和当前播放上下文解析成可直接渲染的按钮描述。
  * 打开界面的四个动作统一转成 openCommandById，复用命令面板已经做好的 surface。
@@ -87,8 +95,12 @@ export const resolvePlayerControlSlot = (
                 filled: false,
                 active: context.loopMode !== 'off',
                 disabled: false,
-                onActivate: context.onToggleLoop,
-                labelKey: 'options.playerControlSlotAction_loop',
+                onActivate: () => {
+                    // 切循环本身会弹一条模式提示，这一条要在它之后才盖得住。
+                    context.onToggleLoop();
+                    noteLoopButtonPress();
+                },
+                labelKey: resolveLoopLabelKey(context.loopMode),
             };
         case 'prev':
             return {

@@ -55,9 +55,11 @@ export type PlayerChromeSettingsState = {
     alwaysShowPlayerBackButton: boolean;
     alwaysShowTrackSwitchButtons: boolean;
     alwaysShowMainWindowTitlebar: boolean;
+    useNativeMacFullscreenButton: boolean;
     transparentPlayerBackground: boolean;
     enablePlayerPageNativeBlur: boolean;
     autoHidePlayerChrome: boolean;
+    autoHideCursorWithPlayerChrome: boolean;
     showOpenPanelCloseButton: boolean;
     setTransparentPlayerBackgroundFromSystem: (enabled: boolean) => void;
     handleTogglePlayerPageNativeBlur: (enable: boolean) => void;
@@ -68,9 +70,11 @@ export type PlayerChromeSettingsState = {
     handleToggleAlwaysShowPlayerBackButton: (enable: boolean) => void;
     handleToggleAlwaysShowTrackSwitchButtons: (enable: boolean) => void;
     handleToggleAlwaysShowMainWindowTitlebar: (enable: boolean) => void;
+    handleToggleNativeMacFullscreenButton: (enable: boolean) => void;
     handleToggleTransparentPlayerBackground: (enable: boolean) => void;
     handleWallpaperTransparentRefused: () => void;
     handleToggleAutoHidePlayerChrome: (enable: boolean) => void;
+    handleToggleAutoHideCursorWithPlayerChrome: (enable: boolean) => void;
     handleToggleOpenPanelCloseButton: (enable: boolean) => void;
 };
 
@@ -89,9 +93,13 @@ export const usePlayerChromeSettingsStore = create<PlayerChromeSettingsState>((s
     alwaysShowPlayerBackButton: getStoredBoolean('always_show_player_back_button', false),
     alwaysShowTrackSwitchButtons: getStoredBoolean('always_show_track_switch_buttons', false),
     alwaysShowMainWindowTitlebar: getStoredBoolean('always_show_main_window_titlebar', false),
+    useNativeMacFullscreenButton: getStoredBoolean('use_native_mac_fullscreen_button', false),
     transparentPlayerBackground: getStoredBoolean('transparent_player_background', false),
     enablePlayerPageNativeBlur: getStoredBoolean('enable_player_page_native_blur', false),
     autoHidePlayerChrome: getStoredBoolean('auto_hide_player_chrome', false),
+    // Rides the chrome auto-hide clock rather than owning one: the cursor goes away with the
+    // controls it would have clicked. Opt-out, so auto-hide can keep the pointer if wanted.
+    autoHideCursorWithPlayerChrome: getStoredBoolean('auto_hide_cursor_with_player_chrome', true),
     showOpenPanelCloseButton: getStoredBoolean('show_open_panel_close_button', true),
     setTransparentPlayerBackgroundFromSystem: (enabled) => {
         setStoredBoolean('transparent_player_background', enabled);
@@ -107,6 +115,14 @@ export const usePlayerChromeSettingsStore = create<PlayerChromeSettingsState>((s
     handleToggleAutoHidePlayerChrome: (enabled: boolean) => {
         localStorage.setItem('auto_hide_player_chrome', enabled ? 'true' : 'false');
         set({ autoHidePlayerChrome: enabled });
+    },
+    handleToggleAutoHideCursorWithPlayerChrome: (enable) => {
+        setStoredBoolean('auto_hide_cursor_with_player_chrome', enable);
+        set({ autoHideCursorWithPlayerChrome: enable });
+        setStatusMessage({
+            type: 'info',
+            text: i18n.t('notifications.' + (enable ? 'cursorAutoHideOn' : 'cursorAutoHideOff')),
+        });
     },
     handleToggleHidePlayerProgressBar: (enable) => {
         setStoredBoolean('hide_player_progress_bar', enable);
@@ -163,6 +179,10 @@ export const usePlayerChromeSettingsStore = create<PlayerChromeSettingsState>((s
             text: i18n.t('notifications.' + (enable ? 'mainWindowTitlebarAlwaysShown' : 'mainWindowTitlebarAutoHidden')),
         });
     },
+    handleToggleNativeMacFullscreenButton: (enable) => {
+        setStoredBoolean('use_native_mac_fullscreen_button', enable);
+        set({ useNativeMacFullscreenButton: enable });
+    },
     handleToggleHidePlayerRightPanelButton: (enable) => {
         setStoredBoolean('hide_player_right_panel_button', enable);
         set({ hidePlayerRightPanelButton: enable });
@@ -210,9 +230,11 @@ export const selectPlayerChromeSettingsSnapshot = (state: PlayerChromeSettingsSt
     alwaysShowPlayerBackButton: state.alwaysShowPlayerBackButton,
     alwaysShowTrackSwitchButtons: state.alwaysShowTrackSwitchButtons,
     alwaysShowMainWindowTitlebar: state.alwaysShowMainWindowTitlebar,
+    useNativeMacFullscreenButton: state.useNativeMacFullscreenButton,
     transparentPlayerBackground: state.transparentPlayerBackground,
     enablePlayerPageNativeBlur: state.enablePlayerPageNativeBlur,
     autoHidePlayerChrome: state.autoHidePlayerChrome,
+    autoHideCursorWithPlayerChrome: state.autoHideCursorWithPlayerChrome,
     showOpenPanelCloseButton: state.showOpenPanelCloseButton,
     handleToggleHidePlayerProgressBar: state.handleToggleHidePlayerProgressBar,
     handleSetPlayerBottomBarOffset: state.handleSetPlayerBottomBarOffset,
@@ -221,10 +243,12 @@ export const selectPlayerChromeSettingsSnapshot = (state: PlayerChromeSettingsSt
     handleToggleAlwaysShowPlayerBackButton: state.handleToggleAlwaysShowPlayerBackButton,
     handleToggleAlwaysShowTrackSwitchButtons: state.handleToggleAlwaysShowTrackSwitchButtons,
     handleToggleAlwaysShowMainWindowTitlebar: state.handleToggleAlwaysShowMainWindowTitlebar,
+    handleToggleNativeMacFullscreenButton: state.handleToggleNativeMacFullscreenButton,
     handleToggleTransparentPlayerBackground: state.handleToggleTransparentPlayerBackground,
     setTransparentPlayerBackgroundFromSystem: state.setTransparentPlayerBackgroundFromSystem,
     handleTogglePlayerPageNativeBlur: state.handleTogglePlayerPageNativeBlur,
     handleToggleAutoHidePlayerChrome: state.handleToggleAutoHidePlayerChrome,
+    handleToggleAutoHideCursorWithPlayerChrome: state.handleToggleAutoHideCursorWithPlayerChrome,
     handleToggleOpenPanelCloseButton: state.handleToggleOpenPanelCloseButton,
     handleWallpaperTransparentRefused: state.handleWallpaperTransparentRefused,
 });

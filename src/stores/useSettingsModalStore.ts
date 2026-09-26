@@ -15,9 +15,11 @@ import type { SettingsAnchorId } from '../components/modal/settings/navigation/s
 
 export type SettingsModalInitialTab = 'help' | 'options';
 
-export type SettingsSubviewId = 'appearance' | 'general' | 'playback' | 'interaction' | 'integration' | 'storage' | 'desktop' | 'lab' | 'visualizer' | 'themePark' | 'lyricFilter' | 'globalLyricOffset';
+export type SettingsSubviewId = 'appearance' | 'general' | 'playback' | 'interaction' | 'integration' | 'storage' | 'desktop' | 'graphics' | 'mods' | 'lab' | 'visualizer' | 'themePark' | 'lyricFilter' | 'globalLyricOffset';
 
-export type VisualizerSettingsSection = 'common' | 'background' | 'visualizer' | 'subtitle';
+/** 歌词动画调参台的四页。列成数组是为了让「思索」的设置直达在单测里能核对 section 真实存在。 */
+export const VISUALIZER_SETTINGS_SECTIONS = ['common', 'background', 'visualizer', 'subtitle'] as const;
+export type VisualizerSettingsSection = typeof VISUALIZER_SETTINGS_SECTIONS[number];
 
 export type SettingsModalState = {
     isOpen: boolean;
@@ -32,7 +34,8 @@ export type SettingsModalState = {
     initialAnchor?: { id: SettingsAnchorId; seq: number } | null;
 };
 
-const LAST_SEEN_GUIDE_VERSION_STORAGE_KEY = 'folia_last_seen_guide_version';
+// Separate from the retired guide key so people who saw the old carousel still receive the Ponder lesson.
+const LAST_SEEN_GUIDE_VERSION_STORAGE_KEY = 'folia_last_seen_ponder_onboarding_version';
 
 export type SettingsModalUiState = {
     appLanguagePreference: AppLanguagePreference;

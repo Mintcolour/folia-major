@@ -17,6 +17,7 @@ import { toFiniteNumber } from '../../utils/replayGain';
 import { createProviderSongMetadata } from '../../utils/songMetadata';
 import { isSongMarkedUnavailable, neteaseApi } from '../netease';
 import { writeProviderSessionValue } from './providerStorage';
+import { collectNeteaseLoginDiagnostics } from './neteaseLoginDiagnostics';
 
 // src/services/onlineMusic/neteaseProvider.ts
 
@@ -378,8 +379,10 @@ export const neteaseProvider: OnlineMusicProvider = {
                 return { state: 'confirmed' };
             }
             if (response?.code === 801) return { state: 'waiting' };
-            return { state: 'error', message: response?.message };
+            // 带上原始状态码：只剩 state 的话，风控（8821 等）和后端吞错后的 404 在日志里无从区分。
+            return { state: 'error', message: `code ${response?.code ?? 'none'}: ${response?.message || response?.msg || 'no message'}` };
         },
+        getQrLoginDiagnostics: collectNeteaseLoginDiagnostics,
     },
     library: {
         async getUserPlaylists(userId, limit, offset) {
@@ -389,7 +392,17 @@ export const neteaseProvider: OnlineMusicProvider = {
         },
         async getLikedSongIds(userId) {
             const response = await neteaseApi.getLikedSongs(toNeteaseId(userId));
-            return response?.ids || [];
+            // The API layer hands error bodies back instead of throwing. Answering one with [] would
+            // tell the caller the account likes nothing: useNeteaseLibrary would clear every heart and
+            // save that empty list into the account snapshot until the next good refresh.
+            const code = Number(response?.code);
+            if ([301, 401, 403].includes(code)) {
+                throw new OnlineProviderError('auth-required', 'NetEase rejected the liked-songs request: not signed in', 'netease');
+            }
+            if (code !== 200 || !Array.isArray(response?.ids)) {
+                throw new OnlineProviderError('unavailable', `NetEase returned no liked-songs list (code ${response?.code})`, 'netease');
+            }
+            return response.ids;
         },
         async getUserAlbums(_userId, limit, offset) {
             const response = await neteaseApi.getFavoriteAlbums(limit, offset);

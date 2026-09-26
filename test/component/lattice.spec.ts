@@ -20,16 +20,47 @@ async function dragCover(page: Page, wall: Locator) {
     }
 }
 
+/**
+ * Drags the open cover and lets go, returning where the pointer was released.
+ *
+ * The hook drops a release more than 80ms after the last sample, and on a loaded machine a single
+ * Playwright round trip can exceed that - the wall then simply never coasts. So this goes through
+ * CDP and pipelines the final move with the release instead of awaiting them in turn.
+ */
+async function flingCover(page: Page, wall: Locator) {
+    const box = (await wall.locator('.lattice-poster.is-expanded').boundingBox())!;
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 3;
+    const session = await page.context().newCDPSession(page);
+    const mouse = (type: 'mouseMoved' | 'mousePressed' | 'mouseReleased', atX: number) => session.send('Input.dispatchMouseEvent', {
+        type, x: atX, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1,
+    });
+    await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+    await mouse('mousePressed', x);
+    for (let step = 1; step <= 5; step++) {
+        await mouse('mouseMoved', x + step * 15);
+        await page.waitForTimeout(16);
+    }
+    const releaseX = x + 6 * 15;
+    await Promise.all([mouse('mouseMoved', releaseX), mouse('mouseReleased', releaseX)]);
+    await session.detach();
+    return { x: releaseX, y };
+}
+
+/** Coasting only has to keep going; how far depends on the release speed, which load lowers. */
+const COAST_MIN_PX = 3;
+
 test('expanded cover drags and coasts; pressing again stops inertia', async ({ mount, page }) => {
     const wall = await mount('lattice');
     await settle(page);
     const before = await cameraX(wall);
-    await dragCover(page, wall);
-    const dragged = await cameraX(wall);
-    expect(dragged - before).toBeGreaterThan(70);
-    await page.mouse.up();
+    // Measure only after the release: a measuring round trip before it could make the sample stale.
+    const release = await flingCover(page, wall);
+    const released = await cameraX(wall);
+    expect(released - before).toBeGreaterThan(70);
     await page.waitForTimeout(100);
-    expect(await cameraX(wall)).toBeGreaterThan(dragged + 10);
+    expect(await cameraX(wall)).toBeGreaterThan(released + COAST_MIN_PX);
+    await page.mouse.move(release.x, release.y);
     await page.mouse.down();
     const stopped = await cameraX(wall);
     await page.waitForTimeout(120);
@@ -115,11 +146,10 @@ test('the system preference alone no longer reduces motion', async ({ mount, pag
     await page.emulateMedia({ reducedMotion: 'reduce' });
     const wall = await mount('lattice');
     await settle(page);
-    await dragCover(page, wall);
-    const dragged = await cameraX(wall);
-    await page.mouse.up();
+    await flingCover(page, wall);
+    const released = await cameraX(wall);
     await page.waitForTimeout(100);
-    expect(await cameraX(wall)).toBeGreaterThan(dragged + 10);
+    expect(await cameraX(wall)).toBeGreaterThan(released + COAST_MIN_PX);
 });
 
 test('touch swipe coasts and a secondary pointer cannot replace the gesture', async ({ mount, page }) => {
@@ -135,11 +165,20 @@ test('touch swipe coasts and a secondary pointer cannot replace the gesture', as
         await page.waitForTimeout(16);
     }
     await field.dispatchEvent('pointerdown', { pointerId: 99, isPrimary: false, pointerType: 'touch', button: 0, clientX: 100, clientY: 100 });
-    const dragged = await cameraX(wall);
-    expect(dragged - before).toBeGreaterThan(75);
-    await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    // The first finger keeps moving after the secondary pointer, which also keeps the release
+    // sample fresh: the hook ignores samples older than 80ms, and on a loaded machine a single CDP
+    // round trip can exceed that. So the last move and the release are pipelined, not awaited in
+    // turn, and the camera is measured only after the release.
+    await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 620, y: 250, id: 0 }] });
+    await page.waitForTimeout(16);
+    await Promise.all([
+        session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 640, y: 250, id: 0 }] }),
+        session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }),
+    ]);
+    const released = await cameraX(wall);
+    expect(released - before).toBeGreaterThan(75);
     await page.waitForTimeout(100);
-    expect(await cameraX(wall)).toBeGreaterThan(dragged + 10);
+    expect(await cameraX(wall)).toBeGreaterThan(released + COAST_MIN_PX);
     await session.detach();
 });
 
@@ -473,11 +512,14 @@ test('expanded chrome operates next, previous and all three loop modes', async (
     await chrome.getByRole('button', { name: 'Previous track', exact: true }).click();
     await expect(wall.locator('.is-expanded')).toHaveAttribute('aria-label', 'Poster 0 · Artist');
     await expectExpandedCentered(wall);
-    for (const mode of ['one', 'off', 'all']) {
+    // 循环按钮的名字跟随当前模式（Loop all / Loop one / Loop off），所以按 data-action 找它。
+    const loop = chrome.locator('[data-action=loop]');
+    for (const [mode, name] of [['one', 'Loop one'], ['off', 'Loop off'], ['all', 'Loop all']]) {
         await wall.locator('.is-expanded').hover({ position: { x: 100, y: 80 } });
-        await chrome.getByRole('button', { name: 'Loop mode', exact: true }).click();
+        await loop.click();
         await expect(wall.locator('[data-loop]')).toHaveAttribute('data-loop', mode);
-        await expect(chrome.locator('[data-action=loop]')).toHaveAttribute('aria-pressed', String(mode !== 'off'));
+        await expect(loop).toHaveAttribute('aria-pressed', String(mode !== 'off'));
+        await expect(loop).toHaveAccessibleName(name);
     }
 });
 
@@ -503,14 +545,22 @@ test('pause, resume and duration updates re-render no poster', async ({ mount, p
     const playing = await transport.getAttribute('aria-label');
     await expect(wall.locator('.lattice-poster')).not.toHaveCount(0);
 
-    // Armed after the wall has settled so the opening wave's own renders are not counted.
-    await page.evaluate(() => { (window as unknown as { __renderCounts: Record<string, number> }).__renderCounts = {}; });
+    const counts = () => page.evaluate(() => (window as unknown as { __renderCounts: Record<string, number> }).__renderCounts);
+    const resetCounts = () => page.evaluate(() => { (window as unknown as { __renderCounts: Record<string, number> }).__renderCounts = {}; });
+    // Armed after the wall has settled so the opening wave's own renders are not counted. On a
+    // loaded machine the wave can still be re-rendering posters after `settle`, so wait for a quiet
+    // 300ms window rather than trusting the fixed wait. Renders that never stop still fail here.
+    await expect.poll(async () => {
+        await resetCounts();
+        await page.waitForTimeout(300);
+        return (await counts()).LatticePoster ?? 0;
+    }, { intervals: [0], timeout: 10_000 }).toBe(0);
+    await resetCounts();
     await wall.getByRole('button', { name: 'Toggle player state' }).click();
     await wall.getByRole('button', { name: 'Bump duration' }).click();
 
     // The expanded card's chrome still follows the transport...
     await expect(transport).not.toHaveAttribute('aria-label', playing!);
-    const counts = () => page.evaluate(() => (window as unknown as { __renderCounts: Record<string, number> }).__renderCounts);
     // ...and the update reached it through the wall, not around it.
     expect((await counts()).Lattice ?? 0).toBeGreaterThan(0);
     expect((await counts()).LatticePoster ?? 0).toBe(0);

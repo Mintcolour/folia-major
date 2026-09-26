@@ -5,28 +5,30 @@ import { hasUploadedObsAsset } from '../../../services/obs/visualSettingsConfig'
 import type { CommandPaletteCommand } from '../types';
 import { createToggleCommand, createAppLanguageCommand, createSettingsCommand, createSettingsAnchorCommand, defineCommand } from '../commandFactories';
 import { sleepTimerCommand } from './sleepTimerCommand';
+import { lyricExportCommands } from './lyricExportCommands';
 import { Gauge, Images, Layers3 } from 'lucide-react';
 import { latticePosterTintSurface } from '../surfaces/latticePosterTintSurface';
 import { gridViewCardsSurface } from '../surfaces/gridViewCardsSurface';
 import { reduceMotionSurface } from '../surfaces/reduceMotionSurface';
+import { openCurrentPagePonder } from '../../../services/ponder/pagePonderTarget';
 
 // src/components/command-palette/commands/settingsCommands.ts
 // Commands in the `settings` group: settings subviews, app toggles, theme, sync, and desktop-only switches.
 
 export const settingsCommands: CommandPaletteCommand[] = [
     createSettingsCommand('settings-help', 'Open Help', 'Open help and shortcuts', ['help', '帮助'], 'help', null, { executeShortcut: 'h' }),
-    sleepTimerCommand,
     {
-        id: 'show-user-guide',
+        id: 'ponder-current-page',
         group: 'settings',
-        title: 'Show User Guide',
-        description: 'Open the user guide tutorial',
-        keywords: ['guide', 'help', 'tutorial', '用户指引', '指南', '帮助'],
-        execute: (_input, context) => {
-            context.settings.setIsUserGuideModalOpen(true);
+        title: 'Ponder this page',
+        description: 'Open the interactive guide for the current page',
+        keywords: ['ponder', 'guide', 'tutorial', '思索', '页面教程'],
+        execute: () => {
+            openCurrentPagePonder();
             return true;
         },
     },
+    sleepTimerCommand,
     createSettingsCommand('settings-options', 'Open Options', 'Open the options center', ['settings', 'options', '设置', '选项'], 'options', null, { executeShortcut: 'o' }),
     createSettingsCommand('settings-appearance', 'Appearance settings', 'Open visual and appearance settings', ['appearance', 'visual settings', '外观', '视觉'], 'options', 'appearance'),
     createSettingsAnchorCommand('settings-theme-presets', 'Theme presets', 'Jump to the built-in and saved theme presets', ['preset theme', 'color preset', '预设主题'], 'themePresets'),
@@ -34,6 +36,14 @@ export const settingsCommands: CommandPaletteCommand[] = [
     createSettingsAnchorCommand('settings-grid-card-style', 'Grid card style', 'Jump to how the home grid draws its cards', ['card style', 'polaroid', 'grid style', '卡片样式'], 'grid3dCardStyle'),
     createSettingsCommand('settings-general', 'General settings', 'Open general app preferences', ['general', 'language settings', 'locale', '通用', '语言'], 'options', 'general'),
     createSettingsAnchorCommand('settings-home-tabs', 'Home tab visibility', 'Choose which tabs the home screen shows', ['hide tabs', 'home tabs', '首页标签'], 'homeTabsVisibility'),
+    createToggleCommand(
+        'home-card-position-toggle',
+        'settings',
+        'Remember home card position',
+        'Toggle restoring each home section to its last card',
+        ['restore card', 'tab position', '卡片定位', '返回首页'],
+        context => context.settings.toggleRememberHomeCardPosition(),
+    ),
     createSettingsAnchorCommand('settings-playback-entry-view', 'Play opens', 'Jump to which view pressing play opens', ['entry view', 'open on play', 'default view', '播放进入视图', '默认视图'], 'playbackEntryView'),
     {
         id: 'playback-entry-view-player',
@@ -82,6 +92,7 @@ export const settingsCommands: CommandPaletteCommand[] = [
     createSettingsAnchorCommand('settings-audio-output', 'Audio output', 'Jump to the audio output device and format settings', ['output device', 'audio device', 'sound card', '输出设备'], 'audioOutputSettings'),
     createSettingsAnchorCommand('settings-transition', 'Smart transition', 'Jump to the FOLIA transition settings', ['automix', 'crossfade', 'transition', '智能过渡', '转场'], 'transitionSettings'),
     createSettingsAnchorCommand('settings-local-lyrics-priority', 'Local song lyrics priority', 'Choose whether local songs prefer local or online lyrics', ['local lyrics priority', 'online lyrics first', 'local song lyrics', '本地歌曲歌词优先级', '在线优先', '本地歌词', 'bendigeciyouxianji', 'bdgcyxj'], 'lyrics'),
+    createSettingsAnchorCommand('settings-local-lyric-format-order', 'Local lyric file format priority', 'Choose which format wins when a track has several lyric files', ['lyric format priority', 'lyric file order', 'lrc ttml priority', '本地歌词文件格式优先级', '歌词格式', '格式优先级', 'geciwenjiangeshi', 'gcgsyxj'], 'lyrics'),
     createSettingsCommand('settings-integration', 'Integration settings', 'Open Stage, Now Playing, and Navidrome settings', ['integration', 'stage', 'now playing', 'navidrome settings', '集成', '连接'], 'options', 'integration'),
     createSettingsAnchorCommand('settings-navidrome', 'Navidrome server', 'Jump to the Navidrome server connection', ['navidrome', 'subsonic', 'music server', '音乐服务器'], 'navidrome'),
     createSettingsAnchorCommand('settings-stage-mode', 'Stage mode', 'Jump to the Stage external player settings', ['stage', 'external player', '舞台模式'], 'stageMode'),
@@ -220,6 +231,7 @@ export const settingsCommands: CommandPaletteCommand[] = [
             return true;
         },
     },
+    ...lyricExportCommands,
     createSettingsCommand(
         'settings-local-library-watch',
         'Local folder watch settings',
@@ -291,7 +303,65 @@ export const settingsCommands: CommandPaletteCommand[] = [
             return true;
         },
     },
+    createSettingsCommand('settings-graphics', 'Graphics settings', 'Open static mode, frame rate cap, Linux glow fix and reduced motion', ['graphics', 'performance', 'frame rate', 'fps', 'rendering', '图形', '图形设置', '性能', '帧率', '渲染'], 'options', 'graphics'),
+    createSettingsCommand('settings-mods', 'Mod settings', 'Open the mod system switch and the installed mods', ['mod manager', 'mod system', 'plugins', '模组设置', '模组系统', '插件'], 'options', 'mods', { platform: ['electron'] }),
     createSettingsCommand('settings-lab', 'Lab settings', 'Open experimental settings', ['lab', 'experimental', '实验', '实验室'], 'options', 'lab'),
+    createSettingsAnchorCommand(
+        'settings-ponder-hints',
+        'Ponder tutorial hints',
+        'Choose when the hold-G tutorial hint appears',
+        ['ponder', 'tutorial hint', '思索', '教程提示'],
+        'ponderHints',
+    ),
+    // 三档设置照 playback-entry-view-* 的先例：一值一条命令，isAvailable 把当前值那条藏掉。
+    // createToggleCommand 只能表达两态，套不上。
+    defineCommand({
+        id: 'ponder-hints-always',
+        group: 'settings',
+        title: 'Ponder hints: always show',
+        description: 'Show the hold-G hint on every teachable control',
+        keywords: ['ponder hints always', '思索提示 始终显示'],
+        isAvailable: context => (context ? context.settings.ponderHintVisibility !== 'always' : true),
+        execute: (_input, context) => {
+            if (context.settings.ponderHintVisibility === 'always') return false;
+            context.settings.setPonderHintVisibility('always');
+            return true;
+        },
+    }),
+    defineCommand({
+        id: 'ponder-hints-unseen',
+        group: 'settings',
+        title: 'Ponder hints: only where I have not looked',
+        description: 'Stop hinting a control once its tutorial has been watched',
+        keywords: ['ponder hints unseen', '思索提示 仅未看过'],
+        isAvailable: context => (context ? context.settings.ponderHintVisibility !== 'unseen' : true),
+        execute: (_input, context) => {
+            if (context.settings.ponderHintVisibility === 'unseen') return false;
+            context.settings.setPonderHintVisibility('unseen');
+            return true;
+        },
+    }),
+    createToggleCommand(
+        'ponder-touch-button-toggle',
+        'settings',
+        'Ponder button on touch',
+        'Show or hide the lightbulb in the top-right corner on touch devices',
+        ['ponder touch button', 'lightbulb', '触屏思索按钮', '灯泡按钮'],
+        context => context.settings.togglePonderTouchButton(),
+    ),
+    defineCommand({
+        id: 'ponder-hints-off',
+        group: 'settings',
+        title: 'Ponder hints: off',
+        description: 'Never show the hold-G hint',
+        keywords: ['ponder hints off', '思索提示 关闭'],
+        isAvailable: context => (context ? context.settings.ponderHintVisibility !== 'off' : true),
+        execute: (_input, context) => {
+            if (context.settings.ponderHintVisibility === 'off') return false;
+            context.settings.setPonderHintVisibility('off');
+            return true;
+        },
+    }),
     {
         id: 'settings-player-bottom-bar-position',
         group: 'settings',
@@ -307,7 +377,9 @@ export const settingsCommands: CommandPaletteCommand[] = [
             return true;
         },
     },
-    createSettingsCommand(
+    // 用 anchor 版而不是 createSettingsCommand：后者只认页面，落在「通用」页顶部，
+    // 而槽位选择器在这一页的底部界面那一节里，跳过去等于没跳。
+    createSettingsAnchorCommand(
         'settings-player-control-slots',
         'Player button slots',
         'Choose which actions the two buttons beside the progress bar run',
@@ -315,8 +387,7 @@ export const settingsCommands: CommandPaletteCommand[] = [
             'progress bar buttons', 'customize player buttons',
             '进度条按钮', '播放按钮自定义', '按钮槽位',
         ],
-        'options',
-        'general',
+        'bottomUiSettings',
     ),
     createSettingsCommand('settings-visualizer', 'Visualizer settings', 'Open lyrics animation workbench', ['visualizer workbench', '可视化', '歌词动画', 'donghua'], 'options', 'visualizer'),
     createSettingsCommand('settings-theme-park', 'Color', 'Open theme editor', ['theme park', 'theme', '配色', '主题', '主题公园'], 'options', 'themePark', { executeShortcut: 't' }),
@@ -466,6 +537,8 @@ export const settingsCommands: CommandPaletteCommand[] = [
     createToggleCommand('settings-toggle-follow-system-reduced-motion', 'settings', 'Follow system reduced motion', 'Toggle whether the system animation setting is allowed to reduce motion in the app', ['system animation setting', 'os reduced motion', 'system motion preference', '跟随系统动画设置', '跟随系统减少动画', '系统动效偏好'], context => context.settings.toggleFollowSystemReducedMotion()),
     createToggleCommand('settings-toggle-track-switch-buttons', 'settings', 'Always show track switch arrows', 'Toggle whether the progress bar track switch arrows stay visible beside the title', ['track switch buttons', 'previous next arrows', 'progress bar arrows', 'song switch buttons', '切歌箭头', '切换箭头', '始终显示切歌按钮', '进度条切歌按钮', '上一首下一首按钮', 'jinduting qiege', 'sysqgan'], context => context.settings.toggleAlwaysShowTrackSwitchButtons()),
     createToggleCommand('settings-toggle-main-window-titlebar', 'settings', 'Always show window control buttons', 'Toggle whether the main window control buttons stay visible', ['always show window controls', 'window control buttons', 'always show titlebar', 'main window titlebar', 'titlebar', '标题栏', '控制按钮', '始终显示标题栏', '始终显示控制按钮', '主窗口标题栏', 'kongzhi annniu', 'bt', 'zckbt'], context => context.settings.toggleAlwaysShowMainWindowTitlebar()),
+    createToggleCommand('settings-toggle-native-mac-fullscreen-button', 'settings', 'Native macOS fullscreen button', 'Toggle whether the macOS window control enters native fullscreen instead of maximizing', ['mac window control', 'native fullscreen', 'maximize button', 'macOS 全屏', '原生全屏', '窗口按钮'], context => context.settings.toggleNativeMacFullscreenButton(), { platform: ['mac'] }),
+    createToggleCommand('settings-toggle-cursor-auto-hide', 'settings', 'Hide cursor with player controls', 'Toggle whether the mouse pointer disappears together with the auto-hidden player controls', ['cursor', 'mouse pointer', 'hide cursor', 'hide mouse', 'pointer', '鼠标', '鼠标指针', '隐藏鼠标', '隐藏指针', '指针自动隐藏'], context => context.settings.toggleAutoHideCursorWithPlayerChrome()),
     createToggleCommand('settings-toggle-auto-play-on-launch', 'settings', 'Auto-play on launch', 'Toggle whether opening the app resumes the last session by itself', ['autoplay', 'auto play', 'resume on open', 'play on startup', '自动播放', '启动自动播放', '进入应用自动播放', '续播'], context => context.settings.toggleAutoPlayOnLaunch()),
     createToggleCommand('settings-toggle-transcode-fallback', 'settings', 'Transcode unsupported audio', 'Toggle Electron recovery for local and Navidrome audio Chromium cannot decode', ['ffmpeg', 'unsupported audio', 'decode fallback', '无法解码', '转码恢复'], context => context.settings.toggleTranscodeFallback(), { platform: ['electron'] }),
     createToggleCommand('settings-toggle-bottom-subtitle-overlay', 'settings', 'Toggle bottom subtitle overlay', 'Show or hide the whole bottom subtitle overlay', [

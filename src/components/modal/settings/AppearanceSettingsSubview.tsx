@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Monitor, Palette, Settings2, LayoutGrid, PanelsTopLeft, Images, Download, Copy, Check, ChevronRight, AlertTriangle, KeyRound, Music2 } from 'lucide-react';
+import { Monitor, Palette, Settings2, LayoutGrid, PanelsTopLeft, Images, Download, Copy, Check, ChevronRight, AlertTriangle, KeyRound, Music2, Film } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useShallow } from 'zustand/react/shallow';
 import {
@@ -12,6 +12,7 @@ import { applyVisualizerTuningsToSettings } from '../../visualizer/tuningRegistr
 import { ObsCopyCssButton } from '../../shared/ObsCopyCssButton';
 import { mergeUrlBackgroundList } from '../../../utils/urlBackground';
 import { compressConfig, decompressConfig, readSavedCustomTheme } from '../../../utils/appearanceCodec';
+import { importFoliumParams, snapshotFoliumParams } from '../../../mods/folium/paramStore';
 import { ACTIVATE_CUSTOM_THEME_KEY, buildImportPlan, THEME_DARK_KEY, THEME_LIGHT_KEY, type ImportPlan } from '../../../utils/appearanceImportPlan';
 import { isFontFamilyAvailable } from '../../../utils/fontAvailability';
 import ImportConfirmDialog from './ImportConfirmDialog';
@@ -22,10 +23,12 @@ import { resolveWebObsTarget, selectWebObsSource } from '../../../services/obs/w
 import { buildVisualSettingsConfig, resolveObsCopyHintKey } from '../../../services/obs/visualSettingsConfig';
 import LatticeSettingsSection from './LatticeSettingsSection';
 import GridViewSettingsSection from './GridViewSettingsSection';
+import VideoLayerSettingsSection from './VideoLayerSettingsSection';
 import NowPlayingCardSettingsSection from './NowPlayingCardSettingsSection';
 import { isThemeGenerationSource, type ThemeGenerationSource } from '../../../services/themePreferences';
 import { SettingsAnchor } from './navigation/SettingsAnchorContext';
 import SettingsSectionHeading from './navigation/SettingsSectionHeading';
+import { settingsDividerClassFor } from './settingsCardClasses';
 import { setStatusMessage } from '../../../stores/useStatusMessageStore';
 import { useVisualizerSettingsStore } from '../../../stores/useVisualizerSettingsStore';
 import { useVisualizerAssetStore } from '../../../stores/useVisualizerAssetStore';
@@ -58,6 +61,7 @@ type AppearanceSettingsSubviewProps = {
     onOpenAiSettings: () => void;
     onToggleTransparentPlayerBackground: (enabled: boolean) => void;
     onToggleAutoHidePlayerChrome: (enabled: boolean) => void;
+    onToggleAutoHideCursorWithPlayerChrome: (enabled: boolean) => void;
     onSaveCustomTheme: (dualTheme: DualTheme) => void;
     settingsCardClass: string;
     songThemeAutoSwitchEnabled: boolean;
@@ -67,6 +71,7 @@ type AppearanceSettingsSubviewProps = {
     toggleOffBackgroundClass: string;
     transparentPlayerBackground: boolean;
     autoHidePlayerChrome: boolean;
+    autoHideCursorWithPlayerChrome: boolean;
     stageTrackPillMode: 'auto' | 'always' | 'never';
     stageTrackPillTimeoutSec: number;
     stageTrackPillOnHome: boolean;
@@ -105,6 +110,7 @@ const AppearanceSettingsSubview: React.FC<AppearanceSettingsSubviewProps> = ({
     onOpenAiSettings,
     onToggleTransparentPlayerBackground,
     onToggleAutoHidePlayerChrome,
+    onToggleAutoHideCursorWithPlayerChrome,
     onSaveCustomTheme,
     settingsCardClass,
     songThemeAutoSwitchEnabled,
@@ -114,6 +120,7 @@ const AppearanceSettingsSubview: React.FC<AppearanceSettingsSubviewProps> = ({
     toggleOffBackgroundClass,
     transparentPlayerBackground,
     autoHidePlayerChrome,
+    autoHideCursorWithPlayerChrome,
     stageTrackPillMode,
     stageTrackPillTimeoutSec,
     onChangeStageTrackPillMode,
@@ -221,6 +228,7 @@ const AppearanceSettingsSubview: React.FC<AppearanceSettingsSubviewProps> = ({
         monetBackgroundTuning: state.monetBackgroundTuning,
         nomandBackgroundTuning: state.nomandBackgroundTuning,
         latentBackgroundTuning: state.latentBackgroundTuning,
+        soraBackgroundTuning: state.soraBackgroundTuning,
         monetTuning: state.monetTuning,
         pendoloTuning: state.pendoloTuning,
         sonnetTuning: state.sonnetTuning,
@@ -245,6 +253,7 @@ const AppearanceSettingsSubview: React.FC<AppearanceSettingsSubviewProps> = ({
         handleSetMonetBackgroundTuning: state.handleSetMonetBackgroundTuning,
         handleSetNomandBackgroundTuning: state.handleSetNomandBackgroundTuning,
         handleSetLatentBackgroundTuning: state.handleSetLatentBackgroundTuning,
+        handleSetSoraBackgroundTuning: state.handleSetSoraBackgroundTuning,
         handleSetMonetTuning: state.handleSetMonetTuning,
         handleSetPendoloTuning: state.handleSetPendoloTuning,
         handleSetSonnetTuning: state.handleSetSonnetTuning,
@@ -277,11 +286,14 @@ const AppearanceSettingsSubview: React.FC<AppearanceSettingsSubviewProps> = ({
         } else if (exportThemeType === 'ai') {
             exportTheme = aiTheme || null;
         }
+        const foliumParams = snapshotFoliumParams();
         return {
             theme: exportTheme,
             ...buildVisualSettingsConfig(),
             songThemeAutoSwitchEnabled,
             songThemeAutoGenerateEnabled,
+            // Mod settings and tunings (Folium param store) are visual settings too.
+            ...(Object.keys(foliumParams).length > 0 ? { foliumParams } : {}),
         };
     };
 
@@ -521,6 +533,12 @@ const AppearanceSettingsSubview: React.FC<AppearanceSettingsSubviewProps> = ({
             if (has('latentBackgroundTuning') && config.latentBackgroundTuning) {
                 storeVisualizer.handleSetLatentBackgroundTuning(config.latentBackgroundTuning);
             }
+            if (has('soraBackgroundTuning') && config.soraBackgroundTuning) {
+                storeVisualizer.handleSetSoraBackgroundTuning(config.soraBackgroundTuning);
+            }
+            if (has('foliumParams') && config.foliumParams) {
+                importFoliumParams(config.foliumParams);
+            }
 
             let mergedUrlList: UrlBackgroundItem[] | undefined;
 
@@ -591,7 +609,7 @@ const AppearanceSettingsSubview: React.FC<AppearanceSettingsSubviewProps> = ({
                 <SettingsSectionHeading icon={Monitor} label={t('options.lyricsRenderer')} />
                 <div className="space-y-3">
                     {storePlayerChromeSettings.enablePlayerPageNativeBlur && (
-                        <div className="flex items-center gap-2.5 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-500 dark:text-amber-400">
+                        <div className={`flex items-center gap-2.5 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs ${isDaylight ? 'text-amber-600' : 'text-amber-400'}`}>
                             <AlertTriangle size={16} className="shrink-0 text-amber-500" />
                             <span>{t('options.nativeBlurBackgroundNotice')}</span>
                         </div>
@@ -661,6 +679,25 @@ const AppearanceSettingsSubview: React.FC<AppearanceSettingsSubviewProps> = ({
                                 style={{ backgroundColor: autoHidePlayerChrome ? theme?.secondaryColor || 'rgba(114, 119, 134, 1)' : undefined }}
                             >
                                 <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${autoHidePlayerChrome ? 'translate-x-6' : 'translate-x-0'}`} />
+                            </button>
+                        </div>
+                        {/* 指针隐藏是控制栏自动隐藏的附加项：上面那个开关关着时它无事可做，
+                            所以整行淡出，但仍可点击——先设好偏好再开自动隐藏也是合理的顺序。 */}
+                        <div className={`pl-4 border-l-2 border-white/10 flex items-center justify-between gap-4 transition-opacity ${autoHidePlayerChrome ? '' : 'opacity-40'}`}>
+                            <div className="space-y-1">
+                                <div className="text-sm font-medium flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+                                    {t('options.autoHideCursorWithPlayerChrome')}
+                                </div>
+                                <div className="text-xs opacity-50 max-w-[360px]" style={{ color: 'var(--text-secondary)' }}>
+                                    {t('options.autoHideCursorWithPlayerChromeDesc')}
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => onToggleAutoHideCursorWithPlayerChrome(!autoHideCursorWithPlayerChrome)}
+                                className={`w-12 h-6 rounded-full p-1 transition-colors shrink-0 ${!autoHideCursorWithPlayerChrome ? toggleOffBackgroundClass : ''}`}
+                                style={{ backgroundColor: autoHideCursorWithPlayerChrome ? theme?.secondaryColor || 'rgba(114, 119, 134, 1)' : undefined }}
+                            >
+                                <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${autoHideCursorWithPlayerChrome ? 'translate-x-6' : 'translate-x-0'}`} />
                             </button>
                         </div>
                     </div>
@@ -754,7 +791,7 @@ const AppearanceSettingsSubview: React.FC<AppearanceSettingsSubviewProps> = ({
                             <div className="flex items-start gap-2.5 rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2.5 text-xs">
                                 <KeyRound size={15} className="mt-0.5 shrink-0 text-amber-500" />
                                 <div className="space-y-1.5">
-                                    <p className="leading-relaxed text-amber-600 dark:text-amber-400">
+                                    <p className={`leading-relaxed ${isDaylight ? 'text-amber-600' : 'text-amber-400'}`}>
                                         {t('options.themeGenerationSourceAiUnavailable')}
                                     </p>
                                     <button
@@ -915,12 +952,25 @@ const AppearanceSettingsSubview: React.FC<AppearanceSettingsSubviewProps> = ({
                 <SettingsSectionHeading icon={Images} label={t('options.gridViewCardSettings')} />
                 <GridViewSettingsSection
                     settingsCardClass={settingsCardClass}
+                    settingsDividerClass={settingsDividerClassFor(isDaylight)}
                     toggleOffBackgroundClass={toggleOffBackgroundClass}
                     theme={theme}
                 />
             </SettingsAnchor>
 
-            {/* Section 7: Configurations Import/Export (New feature) */}
+            {/* Section 7: Video layer behind the lyrics. Not part of the import/export payload below. */}
+            <SettingsAnchor anchorId="videoLayerSettings" label={t('options.videoLayerSettings')}>
+                <SettingsSectionHeading icon={Film} label={t('options.videoLayerSettings')} />
+                <VideoLayerSettingsSection
+                    settingsCardClass={settingsCardClass}
+                    settingsDividerClass={settingsDividerClassFor(isDaylight)}
+                    toggleOffBackgroundClass={toggleOffBackgroundClass}
+                    getAccentOptionStyle={getAccentOptionStyle}
+                    theme={theme}
+                />
+            </SettingsAnchor>
+
+            {/* Section 8: Configurations Import/Export (New feature) */}
             <SettingsAnchor anchorId="importExportTitle" label={t('options.importExportTitle')}>
                 <SettingsSectionHeading icon={Settings2} label={t('options.importExportTitle')} />
                 <div className={`p-4 rounded-xl border space-y-4 ${settingsCardClass}`}>

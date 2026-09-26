@@ -2,6 +2,7 @@ import {
     DEFAULT_CLADDAGH_TUNING,
     DEFAULT_DIORAMA_TUNING,
     DEFAULT_LATENT_BACKGROUND_TUNING,
+    DEFAULT_SORA_BACKGROUND_TUNING,
     DEFAULT_MONET_BACKGROUND_TUNING,
     DEFAULT_MONET_TUNING,
     DEFAULT_NOMAND_BACKGROUND_TUNING,
@@ -321,6 +322,13 @@ const decompressLatentBackground = (o: any): any => ({
     overlayOpacity: o.oo !== undefined ? o.oo : DEFAULT_LATENT_BACKGROUND_TUNING.overlayOpacity,
 });
 
+const compressSoraBackground = (t: any): any => ({
+    bl: t.blank,
+});
+const decompressSoraBackground = (o: any): any => ({
+    blank: o.bl !== undefined ? o.bl : DEFAULT_SORA_BACKGROUND_TUNING.blank,
+});
+
 const compressMonet = (t: any): any => ({
     kce: t.keywordColoringEnabled,
     msd: t.showDescription,
@@ -410,6 +418,7 @@ const compressTempera = (t: any): any => ({
     cm: t.colorMode,
     sb: t.showBlocks,
     sd: t.showDecor,
+    scm: t.showCornerMarks,
     ti: t.textInversion,
     li: t.layerImages,
     lid: t.layerImageDepth,
@@ -432,6 +441,7 @@ const decompressTempera = (o: any): any => ({
     colorMode: o.cm !== undefined ? o.cm : DEFAULT_TEMPERA_TUNING.colorMode,
     showBlocks: o.sb !== undefined ? o.sb : DEFAULT_TEMPERA_TUNING.showBlocks,
     showDecor: o.sd !== undefined ? o.sd : DEFAULT_TEMPERA_TUNING.showDecor,
+    showCornerMarks: o.scm !== undefined ? o.scm : DEFAULT_TEMPERA_TUNING.showCornerMarks,
     textInversion: o.ti !== undefined ? o.ti : DEFAULT_TEMPERA_TUNING.textInversion,
     layerImages: o.li !== undefined ? o.li : DEFAULT_TEMPERA_TUNING.layerImages,
     layerImageDepth: o.lid !== undefined ? o.lid : DEFAULT_TEMPERA_TUNING.layerImageDepth,
@@ -498,10 +508,13 @@ export const compressConfig = (config: any): string => {
     if (config.monetBackgroundTuning) minified.mbt = compressMonetBackground(config.monetBackgroundTuning);
     if (config.nomandBackgroundTuning) minified.nbt = compressNomandBackground(config.nomandBackgroundTuning);
     if (config.latentBackgroundTuning) minified.lbt = compressLatentBackground(config.latentBackgroundTuning);
+    if (config.soraBackgroundTuning) minified.sbt = compressSoraBackground(config.soraBackgroundTuning);
     if (config.monetTuning) minified.mt = compressMonet(config.monetTuning);
     if (config.pendoloTuning) minified.pdt = compressPendolo(config.pendoloTuning);
     if (config.sonnetTuning) minified.snt = compressSonnet(config.sonnetTuning);
     if (config.temperaTuning) minified.tmp = compressTempera(config.temperaTuning);
+    // Folium param values are already plain JSON keyed by scope; stored as-is.
+    if (config.foliumParams) minified.fp = config.foliumParams;
     if (config.urlBackgroundList) minified.ubl = config.urlBackgroundList;
     if (config.urlBackgroundSelectedId) minified.ubid = config.urlBackgroundSelectedId;
     if (config.songThemeAutoSwitchEnabled !== undefined) minified.stas = config.songThemeAutoSwitchEnabled;
@@ -621,10 +634,12 @@ export const decompressConfig = (str: string): any => {
         if (parsed.mbt) decompressed.monetBackgroundTuning = decompressMonetBackground(parsed.mbt);
         if (parsed.nbt) decompressed.nomandBackgroundTuning = decompressNomandBackground(parsed.nbt);
         if (parsed.lbt) decompressed.latentBackgroundTuning = decompressLatentBackground(parsed.lbt);
+        if (parsed.sbt) decompressed.soraBackgroundTuning = decompressSoraBackground(parsed.sbt);
         if (parsed.mt) decompressed.monetTuning = decompressMonet(parsed.mt);
         if (parsed.pdt) decompressed.pendoloTuning = decompressPendolo(parsed.pdt);
         if (parsed.snt) decompressed.sonnetTuning = decompressSonnet(parsed.snt);
         if (parsed.tmp) decompressed.temperaTuning = decompressTempera(parsed.tmp);
+        if (parsed.fp) decompressed.foliumParams = parsed.fp;
         if (parsed.ubl) decompressed.urlBackgroundList = parsed.ubl;
         if (parsed.ubid) decompressed.urlBackgroundSelectedId = parsed.ubid;
         if (parsed.stas !== undefined) decompressed.songThemeAutoSwitchEnabled = parsed.stas;
@@ -647,8 +662,8 @@ export const decompressConfig = (str: string): any => {
             'subtitleFontInheritsLyrics', 'subtitleFontScale', 'subtitleFontStyle', 'subtitleFontWeight', 'subtitleFontFamily',
             'subtitleFontFallbackFamilies', 'visualizerTunings', 'classicTuning',
             'cadenzaTuning', 'partitaTuning', 'fumeTuning', 'claddaghTuning', 'cappellaTuning',
-            'tiltTuning', 'dioramaTuning', 'monetBackgroundTuning', 'nomandBackgroundTuning', 'latentBackgroundTuning', 'monetTuning',
-            'pendoloTuning', 'sonnetTuning', 'temperaTuning',
+            'tiltTuning', 'dioramaTuning', 'monetBackgroundTuning', 'nomandBackgroundTuning', 'latentBackgroundTuning', 'soraBackgroundTuning', 'monetTuning',
+            'pendoloTuning', 'sonnetTuning', 'temperaTuning', 'foliumParams',
             'urlBackgroundList', 'urlBackgroundSelectedId',
             'songThemeAutoSwitchEnabled', 'songThemeAutoGenerateEnabled', 'themeGenerationSource', 'followSystemTheme',
             'stageTrackPillMode', 'stageTrackPillTimeoutSec', 'stageTrackPillOnHome',

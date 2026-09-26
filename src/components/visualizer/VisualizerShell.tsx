@@ -7,6 +7,9 @@ import { resolveThemeFontStack, resolveThemeFontWeight } from '../../utils/fontS
 import { type VisualizerSharedProps } from './definition';
 import VisualizerBackgroundRenderer from './backgrounds/VisualizerBackgroundRenderer';
 import { getSizedCoverUrl } from '../../utils/coverUrl';
+import { FoliumStageLayerSlot } from '../../mods/folium/registries/stageLayers';
+import VideoLayer from './videoLayer/VideoLayer';
+import { isMainAppSurface } from '../../utils/appSurface';
 
 // Shared outer shell for all visualizers.
 // This is where we keep background layering, font injection, and the hover-only back button
@@ -25,6 +28,7 @@ type VisualizerShellSharedProps = Pick<
     | 'isPanelOpen'
     | 'alwaysShowBackButton'
     | 'onPlayerPanelGuideHotspotChange'
+    | 'isPreviewMode'
 >;
 
 interface VisualizerShellProps {
@@ -71,6 +75,7 @@ const VisualizerShell = forwardRef<HTMLDivElement, VisualizerShellProps>(({
     const resolvedIsPanelOpen = sharedProps?.isPanelOpen ?? false;
     const onPlayerPanelGuideHotspotChange = sharedProps?.onPlayerPanelGuideHotspotChange;
     const isBackButtonVisible = sharedProps?.alwaysShowBackButton || showBackButton;
+    const showStageLayers = !sharedProps?.isPreviewMode && !resolvedStaticMode;
 
     const updatePlayerPanelGuideHotspot = (isActive: boolean) => {
         if (playerPanelGuideHotspotRef.current === isActive) {
@@ -191,7 +196,31 @@ const VisualizerShell = forwardRef<HTMLDivElement, VisualizerShellProps>(({
                 />
             )}
 
+            {/* The built-in video layer follows the same rule as stage layers and stays out of the OBS
+                sources, which cannot open the main window's local file handle. */}
+            {showStageLayers && isMainAppSurface && <VideoLayer paused={resolvedPaused} />}
+
+            {/* Folium stage layers exist on the real player page only, never in previews. */}
+            {showStageLayers && (
+                <FoliumStageLayerSlot
+                    slot="player.stage.back"
+                    theme={theme}
+                    isDaylight={resolvedIsDaylight}
+                    paused={resolvedPaused}
+                />
+            )}
+
             {children}
+
+            {showStageLayers && (
+                <FoliumStageLayerSlot
+                    slot="player.stage.front"
+                    theme={theme}
+                    isDaylight={resolvedIsDaylight}
+                    paused={resolvedPaused}
+                    className="absolute inset-0 pointer-events-none z-20"
+                />
+            )}
         </div>
     );
 });
