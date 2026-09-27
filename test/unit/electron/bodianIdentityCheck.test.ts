@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 // test/unit/electron/bodianIdentityCheck.test.ts
 
 const require = createRequire(import.meta.url);
-const { createIdentityCheck } = require('../../manual/bodian-identity-check.cjs');
+const { createIdentityCheck } = require('../../helpers/bodianIdentityCheck.cjs');
 
 const setup = (login: unknown) => {
     const client = { call: vi.fn().mockResolvedValueOnce({ data: { qrCode: 'test-qr' } })

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 // test/unit/electron/bodianTestPlaylistRoundtrip.test.ts
 
 const require = createRequire(import.meta.url);
-const { testPlaylistRoundtrip } = require('../../manual/bodian-test-playlist-roundtrip.cjs');
+const { testPlaylistRoundtrip } = require('../../helpers/bodianTestPlaylistRoundtrip.cjs');
 
 function setup(initial: string[] = [], failAfterAdd = false) {
     let ids = [...initial];

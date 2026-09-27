@@ -73,12 +73,10 @@ https://bodian-oia.kuwo.cn/bodian/download.html?pageName=login_pc&pt=3&id=<qrCod
 该 GET 路径不是可用的会话验证依据。`login_status` 返回新扫码形成的 V2 本地会话身份；
 它不宣称实时远端鉴权。实际账号请求收到 `auth-required` 时清除主进程会话，前端随后清空账号快照。
 
-经用户同意，后续使用 `test/manual/bodian-account-acceptance.cjs`，仅将新扫码且身份匹配的
-会话以 `safeStorage` 加密保存到 `test-results/bodian-verified-account-profile`。
-它不访问官方客户端配置，`--resume` 仅恢复此隔离配置；`restore` 结果仅证明本地解密，
-不证明远端会话有效。恢复后已实际读取账号曲库、获取并播放完整音源。
-控制命令通过 stdin 或 `--check --operation=...` 传入。`write-check` 只允许唯一名称匹配的
-自建测试歌单，并在添加后删除测试歌曲、核对原始成员集合。
+经用户同意，验收时仅将新扫码且身份匹配的会话以 `safeStorage` 加密保存到独立的测试 profile。
+验收工具不访问官方客户端配置；恢复结果仅证明本地解密，不证明远端会话有效。恢复后已实际
+读取账号曲库、获取并播放完整音源。写入验收只允许唯一名称匹配的自建测试歌单，并在添加后
+删除测试歌曲、核对原始成员集合。相关扫码、抓包和人工验收工具不随功能 PR 提交。
 
 主进程现在只恢复 `BODIAN_SESSION_V2`；初始化删除 `BODIAN_SESSION_V1`，不解密、不迁移旧会话。
 前端启动时不再读取历史波点账号快照；账号能力关闭或环境不可用时清空可见账号与快照，
@@ -106,15 +104,9 @@ https://bodian-oia.kuwo.cn/bodian/download.html?pageName=login_pc&pt=3&id=<qrCod
 使用 Node 24 以上和项目锁文件安装依赖。执行类型检查、`test/unit/onlineMusic/`、
 `test/unit/lyrics/bodianLyrics.test.ts`、`test/unit/electron/bodianApiBridge.test.ts` 以及相关播放回归测试。
 
-只读原生接口探针：`node test/manual/bodian-probe.cjs search`（另支持 detail、album、artist、lyric 等操作）。
-桌面冒烟测试先启动 `npm run dev`，再运行 `node test/manual/bodian-desktop-smoke.cjs`。
-它使用 `test-results/bodian-desktop-profile`，不修改用户正常的 Folia 配置。
-
-人工账号联调使用新的 `test/manual/bodian-account-acceptance.cjs`，设置 `BODIAN_EXPECTED_ACCOUNT_ID`；
-写入测试另需 `BODIAN_TEST_PLAYLIST_NAME`。旧 `bodian-acceptance.cjs` 不再作为验收入口。
-`bodian-verified-smoke.cjs` 使用隔离 V2 会话启动实际应用，通过 Omni 检查账号、曲库、搜索和静音解码播放。
+真实账号联调应使用独立的 Electron profile，不读取官方客户端凭据，也不修改用户正常的 Folia 配置。
 账号 ID、真实歌单 ID、凭据和音频地址不得写入仓库；`test-results` 不得提交。
-本地清理工具 `test/manual/bodian-clear-unverified-session.cjs` 只删除隔离配置中的会话键，不解密、不联网。
+仓库中的自动化覆盖集中在 `test/unit/`；抓包、扫码和桌面人工验收脚本属于开发者本地工具，不随功能 PR 提交。
 
 剩余工作：收藏写入协议与实现、非空收藏专辑的真实验收、完整 UI 操作回归。
 没有对应已验证协议的收藏方法保持缺省，不把 `mutations: true` 当作所有写入均可用的证明。

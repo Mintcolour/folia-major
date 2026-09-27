@@ -1,6 +1,6 @@
 const { BodianError } = require('../../electron/bodian/http.cjs');
 
-// test/manual/bodian-identity-check.cjs
+// test/helpers/bodianIdentityCheck.cjs
 // Isolated acceptance helper. No session store, profile lookup, library access or credential output.
 // Protocol lead: MoeclubM/PyBodian commit 79ed7e25234efa07f4a5445ca10fdf06acedba0d.
 

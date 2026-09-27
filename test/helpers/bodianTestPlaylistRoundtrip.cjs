@@ -1,6 +1,6 @@
 const { mediaId } = require('../../electron/bodian/catalog.cjs');
 
-// test/manual/bodian-test-playlist-roundtrip.cjs
+// test/helpers/bodianTestPlaylistRoundtrip.cjs
 // Only the uniquely named owned test playlist may be modified, with the original membership restored.
 
 async function testPlaylistRoundtrip({ client, library, mutations, expectedName, songId }) {
