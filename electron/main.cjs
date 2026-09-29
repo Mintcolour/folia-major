@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session, screen, dialog, shell, nativeImage, desktopCapturer, Menu, Tray, nativeTheme, powerSaveBlocker, safeStorage, protocol, net: electronNet } = require('electron');
+const { app, BrowserWindow, ipcMain, session, screen, dialog, shell, nativeImage, desktopCapturer, Menu, Tray, nativeTheme, powerSaveBlocker, safeStorage, protocol, crashReporter, net: electronNet } = require('electron');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
@@ -1714,13 +1714,46 @@ const crashLog = createCrashLog({
   getLocale: getMainLocale,
   onLine: runtimeLine,
 });
+// Keep native crash dumps beside the text reports so one folder contains the evidence needed
+// to identify the faulting module. Dumps stay on this machine until the user shares them.
+if (crashLog.dir) {
+  const crashDumpDir = path.join(crashLog.dir, 'crash-dumps');
+  try {
+    fs.mkdirSync(crashDumpDir, { recursive: true });
+    app.setPath('crashDumps', crashDumpDir);
+  } catch (error) {
+    console.warn('[Crash] Could not place crash dumps beside logs', error);
+  }
+}
+try {
+  crashReporter.start({ uploadToServer: false });
+} catch (error) {
+  console.warn('[Crash] Native crash dumps are unavailable', error);
+}
+
+const RENDERER_CRASH_RELOAD_WINDOW_MS = 60_000;
+const MAX_RENDERER_CRASH_RELOADS = 2;
+
+// Limit automatic reloads to avoid trapping the user in a crash loop.
+function shouldReloadMainRenderer(win, details) {
+  if (details?.reason !== 'crashed' || !win || win.isDestroyed() || isWallpaperModeEnabled()) {
+    return false;
+  }
+  const now = Date.now();
+  win.__rendererCrashReloads = (win.__rendererCrashReloads || [])
+    .filter(at => now - at < RENDERER_CRASH_RELOAD_WINDOW_MS);
+  return win.__rendererCrashReloads.length < MAX_RENDERER_CRASH_RELOADS;
+}
+
 installCrashHandlers({
   app,
   crashLog,
-  // 壁纸模式对渲染进程崩溃有自己的恢复路径：Linux 的 windowtolayer watchdog 会重启进程回到普通
-  // 窗口，Windows / macOS 就地 reload 页面。两处都只认 reason === 'crashed'，这里跟着它们走。
-  // 崩溃文件照写，只是不弹窗——桌面正在自己恢复，弹出来的框用户除了关掉别无选择。
-  isRendererCrashRecovered: (details) => details?.reason === 'crashed' && isWallpaperModeEnabled(),
+  // 壁纸模式沿用自己的恢复路径；普通主窗口短时间内最多自动重载两次。
+  // 恢复期间仍写日志，但不弹出会打断恢复的提示框。
+  isRendererCrashRecovered: (details, contents) => details?.reason === 'crashed' && (
+    isWallpaperModeEnabled()
+    || (contents === mainWindow?.webContents && shouldReloadMainRenderer(mainWindow, details))
+  ),
 });
 
 
@@ -2110,7 +2143,7 @@ function saveWindowState(win, options = {}) {
   // A wallpaper window's geometry is dictated by the display; persisting it would clobber the
   // bounds a normal window restores to after leaving wallpaper mode (same reason as the X11
   // guards — the Windows wallpaper path just has no separate window set to check against).
-  if (!win || win.isDestroyed() || isX11WallpaperMode() || x11WallpaperWindows.has(win) || win.__wallpaperGeometry === true) {
+  if (!win || win.isDestroyed() || isX11WallpaperMode() || x11WallpaperWindows.has(win) || win.__wallpaperGeometry === true || win.__transparentFullscreen === true) {
     return;
   }
 
@@ -2134,6 +2167,26 @@ function saveWindowState(win, options = {}) {
   pendingWindowStateSave = null;
   clearWindowStateSaveTimer();
   persistWindowStateSnapshot(snapshot);
+}
+
+// Electron sizes Windows transparent windows to the display without updating isFullScreen().
+// Track that path per window so F11 can restore its original bounds on the next press.
+function isMainWindowFullscreen(win) {
+  return win.__transparentFullscreen === true || win.isFullScreen();
+}
+
+function setMainWindowFullscreen(win, fullscreen) {
+  if (process.platform === 'win32' && win.__wallpaperWindowTransparent === true) {
+    if (isMainWindowFullscreen(win) === fullscreen) {
+      return;
+    }
+    if (fullscreen) {
+      saveWindowState(win);
+      win.__transparentFullscreenRestoreBounds = win.getBounds();
+    }
+    win.__transparentFullscreen = fullscreen;
+  }
+  win.setFullScreen(fullscreen);
 }
 
 function isWindowsThumbarSupported() {
@@ -4973,6 +5026,19 @@ function createWindow(options = {}) {
   }
   win.__wallpaperWindowTransparent = useTransparentWindow;
   win.__wallpaperGeometry = useWallpaperGeometry;
+  win.__transparentFullscreen = false;
+
+  if (process.platform === 'win32' && useTransparentWindow) {
+    win.webContents.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown' || input.key !== 'F11' || input.isAutoRepeat) {
+        return;
+      }
+      event.preventDefault();
+      if (!isWallpaperModeEnabled()) {
+        setMainWindowFullscreen(win, !isMainWindowFullscreen(win));
+      }
+    });
+  }
 
   if (useDesktopWindowType) {
     x11WallpaperWindows.add(win);
@@ -4981,6 +5047,11 @@ function createWindow(options = {}) {
   // Watchdog trigger point 1: a crashed renderer breaks the wallpaper connection.
   win.webContents.on('render-process-gone', (_event, details) => {
     wallpaperWatchdog.handleRendererGone(details);
+    if (win === mainWindow && shouldReloadMainRenderer(win, details)) {
+      win.__rendererCrashReloads.push(Date.now());
+      win.webContents.reload();
+      return;
+    }
     // Windows: a renderer crash kills only the page — the BrowserWindow (and its place in the
     // WorkerW) survives, so the helper keeps the still-valid hwnd and must NOT be touched.
     // Reloading the webContents restores the UI in place; the full window rebuild
@@ -5037,9 +5108,19 @@ function createWindow(options = {}) {
   // macOS completes fullscreen asynchronously; notify after the native transition, including
   // transitions initiated by the system menu or keyboard instead of the titlebar button.
   win.on('enter-full-screen', () => {
+    if (process.platform === 'win32' && useTransparentWindow) {
+      if (!win.__transparentFullscreen) {
+        saveWindowState(win);
+        win.__transparentFullscreenRestoreBounds = win.getBounds();
+      }
+      win.__transparentFullscreen = true;
+    }
     win.webContents.send('window-fullscreen-changed', true);
   });
   win.on('leave-full-screen', () => {
+    if (process.platform === 'win32' && useTransparentWindow) {
+      win.__transparentFullscreen = false;
+    }
     win.webContents.send('window-fullscreen-changed', false);
   });
   win.on('maximize', () => {
@@ -6042,11 +6123,11 @@ ipcMain.handle('window-toggle-fullscreen', (event) => {
 
   // Fullscreen would tear the wallpaper window out of its desktop-layer geometry.
   if (isWallpaperModeEnabled()) {
-    return mainWindow.isFullScreen();
+    return isMainWindowFullscreen(mainWindow);
   }
 
-  const nextFullscreen = !mainWindow.isFullScreen();
-  mainWindow.setFullScreen(nextFullscreen);
+  const nextFullscreen = !isMainWindowFullscreen(mainWindow);
+  setMainWindowFullscreen(mainWindow, nextFullscreen);
   return nextFullscreen;
 });
 
@@ -6086,7 +6167,7 @@ ipcMain.handle('window-is-fullscreen', (event) => {
   if (!isTrustedMainWindowContents(event.sender) || !mainWindow || mainWindow.isDestroyed()) {
     return false;
   }
-  return mainWindow.isFullScreen();
+  return isMainWindowFullscreen(mainWindow);
 });
 
 ipcMain.handle('window-get-transparent-mode', (event) => {
@@ -6461,8 +6542,8 @@ ipcMain.handle('remote-control-send-command', (event, command) => {
       return false;
     }
 
-    if (mainWindow.isFullScreen()) {
-      mainWindow.setFullScreen(false);
+    if (isMainWindowFullscreen(mainWindow)) {
+      setMainWindowFullscreen(mainWindow, false);
     }
 
     if (mainWindow.isMaximized()) {
@@ -6536,14 +6617,16 @@ ipcMain.handle('video-export-prepare-window', (event, size) => {
 
   if (!videoExportWindowRestoreState) {
     videoExportWindowRestoreState = {
-      bounds: mainWindow.getBounds(),
+      bounds: mainWindow.__transparentFullscreen === true
+        ? (mainWindow.__transparentFullscreenRestoreBounds || mainWindow.getBounds())
+        : mainWindow.getBounds(),
       isMaximized: mainWindow.isMaximized(),
-      isFullScreen: mainWindow.isFullScreen(),
+      isFullScreen: isMainWindowFullscreen(mainWindow),
     };
   }
 
-  if (mainWindow.isFullScreen()) {
-    mainWindow.setFullScreen(false);
+  if (isMainWindowFullscreen(mainWindow)) {
+    setMainWindowFullscreen(mainWindow, false);
   }
 
   if (mainWindow.isMaximized()) {
@@ -6577,7 +6660,7 @@ ipcMain.handle('video-export-restore-window', (event) => {
   mainWindow.setBounds(restoreState.bounds, true);
 
   if (restoreState.isFullScreen) {
-    mainWindow.setFullScreen(true);
+    setMainWindowFullscreen(mainWindow, true);
   } else if (restoreState.isMaximized) {
     mainWindow.maximize();
   }

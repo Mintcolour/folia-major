@@ -259,7 +259,8 @@ export default {
         "diorama": "Teks titik-titik melintasi ruang 3D dengan kamera mengikuti lirik",
         "pendolo": "Sampul duduk di muka jam; lirik berdetak sepanjang busur, satu gigi demi satu",
         "sonnet": "Garis halus, bingkai, dan huruf raksasa berongga bergantian terbuka; tiap baris tertata bagai halaman sajak",
-        "tempera": "Bidang warna luas dan raster halus menyusun ulang perlahan; kata-kata membalik warna saat melintasi cat"
+        "tempera": "Bidang warna luas dan raster halus menyusun ulang perlahan; kata-kata membalik warna saat melintasi cat",
+        "lumiere": "Cahaya volumetrik menembus kabut dan debu melayang; setiap kata terukir saat berkas cahaya menyentuhnya"
       },
       "background": {
         "common": "Cahaya fluida dari warna sampul, dengan bentuk geometris melayang di belakang",
@@ -513,6 +514,7 @@ export default {
       "visualizer-pendolo": { "title": "Visualizer: Pendolo", "description": "Alihkan ke visualizer Pendolo" },
       "visualizer-sonnet": { "title": "Visualizer: Sonnet", "description": "Alihkan ke PV lirik Jepang Sonnet" },
       "visualizer-tempera": { "title": "Visualizer: Tempera", "description": "Alihkan ke PV lirik blok warna Tempera" },
+      "visualizer-lumiere": { "title": "Visualizer: Lumiere", "description": "Alihkan ke PV lirik cahaya panggung Lumiere" },
       "desktop-toggle-remote-control": { "title": "Alihkan jendela remote control", "description": "Buka atau tutup jendela remote control" },
       "desktop-toggle-main-window-always-on-top": { "title": "Alihkan jendela utama selalu di atas", "description": "Sematkan atau lepas jendela utama di atas jendela lain" },
       "background-monet-full-overlay": { "title": "Latar: Overlay Layar Penuh Monet", "description": "Alihkan latar ke tata letak overlay layar penuh Monet" },
@@ -539,6 +541,7 @@ export default {
       "settings-toggle-follow-system-reduced-motion": { "title": "Ikuti pengurangan gerakan sistem", "description": "Alihkan apakah pengaturan animasi sistem boleh mengurangi gerakan di aplikasi" },
       "settings-toggle-track-switch-buttons": { "title": "Selalu tampilkan panah pengganti trek", "description": "Alihkan apakah panah pengganti trek tetap terlihat di samping judul" },
       "settings-toggle-main-window-titlebar": { "title": "Selalu tampilkan tombol kontrol jendela", "description": "Alihkan apakah tombol kontrol jendela tetap terlihat" },
+      "settings-toggle-fullscreen-titlebar-button": { "title": "Alihkan visibilitas tombol layar penuh", "description": "Tampilkan atau sembunyikan tombol layar penuh di kontrol jendela desktop" },
       "settings-toggle-native-mac-fullscreen-button": { "title": "Tombol layar penuh asli macOS", "description": "Alihkan kontrol jendela macOS ke layar penuh asli alih-alih memaksimalkan" },
       "settings-toggle-cursor-auto-hide": { "title": "Sembunyikan kursor bersama kontrol pemutar", "description": "Alihkan apakah penunjuk tetikus ikut menghilang bersama kontrol pemutar yang tersembunyi otomatis" },
       "settings-toggle-auto-play-on-launch": { "title": "Putar otomatis saat dibuka", "description": "Alihkan apakah membuka aplikasi langsung melanjutkan sesi terakhir" },
@@ -1550,6 +1553,8 @@ export default {
     "alwaysShowTrackSwitchButtonsDesc": "Pertahankan panah sebelumnya/berikutnya di kedua sisi judul bilah progres tetap terlihat alih-alih muncul saat diarahkan.",
     "alwaysShowMainWindowTitlebar": "Selalu Tampilkan Tombol Kontrol Jendela",
     "alwaysShowMainWindowTitlebarDesc": "Pertahankan tombol minimalkan, maksimalkan, dan tutup tetap terlihat tanpa menampilkan strip titlebar.",
+    "hideFullscreenButton": "Sembunyikan tombol layar penuh",
+    "hideFullscreenButtonDesc": "Jika diaktifkan, sembunyikan tombol layar penuh pada kontrol jendela aplikasi desktop.",
     "useNativeMacFullscreenButton": "Gunakan tombol layar penuh asli macOS",
     "useNativeMacFullscreenButtonDesc": "Buat kontrol jendela masuk ke layar penuh asli macOS alih-alih memaksimalkan jendela. Nonaktif secara bawaan.",
     "hidePlayerProgressBar": "Sembunyikan bilah kontrol bawah pemutar",
@@ -1619,8 +1624,8 @@ export default {
     "gridViewCardFalloffReset": "Pulihkan peredupan bawaan",
     "disableVisualizerGeometricBackground": "Sembunyikan latar belakang geometris umum",
     "disableVisualizerGeometricBackgroundDesc": "Sembunyikan bentuk latar belakang geometris bersama di halaman pemutar.",
-    "desktopTrayBehavior": "Perilaku tray desktop",
-    "desktopTrayBehaviorDesc": "Hanya desktop. Kontrol minimalkan-ke-tray dan apakah peluncuran langsung membuka halaman pemutar.",
+    "desktopTrayBehavior": "Perilaku jendela desktop",
+    "desktopTrayBehaviorDesc": "Khusus desktop. Atur tombol layar penuh, perilaku tray dan taskbar, serta halaman yang dibuka saat aplikasi dimulai.",
     "minimizeToTray": "Minimalkan ke tray",
     "hideTaskbarIcon": "Sembunyikan ikon taskbar",
     "hideTaskbarIconDesc": "Sembunyikan aplikasi dari taskbar meskipun jendela utama masih terbuka. Ikon tray tetap menjadi cara utama untuk kembali ke aplikasi.",
@@ -2497,6 +2502,21 @@ export default {
       "qqPrivatePlaylists": {
         "title": "Playlist Pribadi QQ Music",
         "description": "Setelah masuk, playlist pribadi buatan Anda kini dapat memuat lagu dengan paging sungguhan. Backend yang di-host sendiri harus memakai qq-music-api 3.1.2 atau lebih baru; backend lama beralih otomatis, dan playlist yang tidak dapat dibaca kini menjelaskan bahwa playlist itu tidak publik, alih-alih tampil kosong tanpa keterangan."
+      }
+    },
+    "v0_7_10": {
+      "intro": "0.7.10 menghadirkan mode lirik Lumiere, transisi grid playlist yang lebih mulus, dan tombol layar penuh di aplikasi desktop.",
+      "lumiere": {
+        "title": "Mode Lirik Baru: Lumiere",
+        "description": "Cahaya volumetrik, kabut, dan gambar garis mengikuti lagu saat berkas cahaya menerangi lirik kata demi kata. Atur pencahayaan, teks, warna tema, dan kualitas. Lumiere memerlukan WebGL."
+      },
+      "gridTransitions": {
+        "title": "Transisi Grid Playlist Lebih Mulus",
+        "description": "Saat berpindah tampilan atau melompat antarplaylist, kartu sampul kini bergeser mulus ke tempatnya. Jika gerakan mikro antarmuka dikurangi, perpindahan berlangsung langsung."
+      },
+      "fullscreenButton": {
+        "title": "Tombol Layar Penuh Desktop",
+        "description": "Alihkan layar penuh dari kontrol jendela aplikasi desktop. Tombolnya dapat disembunyikan di pengaturan Desktop."
       }
     },
     "v0_7_9": {
