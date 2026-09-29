@@ -10,6 +10,7 @@ Web 端显示为运行环境不可用；没有默认外部代理服务。
 | --- | --- |
 | 平台入口、IPC 搜索、歌曲详情 | 已实现；Windows Electron 搜索已实测 |
 | 公开歌单、专辑、歌手、推荐 | 已实现；对应原生读取接口已实测 |
+| Discover 系统歌单 | 已接入现有推荐列表；潮趣日推、新歌大赏、华文流行极致、欧西流行宇宙均已验证返回 30 首 |
 | 逐字歌词 | 已实现；真实响应解码与合成时间样例测试通过 |
 | 扫码登录 | 已修正为 `authType: 10`；三次新扫码均精确匹配用户独立提供的账号 ID |
 | 会话恢复、个人歌单、我喜欢、收藏专辑 | V2 加密会话恢复后已读到自建歌单及喜欢歌曲；收藏歌单/专辑的空列表已验证，非空列表待验收 |
@@ -46,6 +47,7 @@ API 主站为 `https://bd-api.kuwo.cn`。桌面头包含 `plat=win`、`channel=W
 | 专辑及曲目 | `/api/service/album/{id}`、`/api/service/album/music/{id}` |
 | 歌手及曲目/专辑 | `/api/service/artist/{id}`、`/api/service/artist/music/{id}`、`/api/service/artist/album/{id}` |
 | 推荐 | `/api/service/finds/playlist`、`/api/service/music/recommendList` |
+| Discover | `/api/service/home/module?moduleId=1` 获取卡片，`/api/service/home/aiPlaylistDetail?index=N` 获取完整歌曲 |
 
 二维码内容必须为：
 
